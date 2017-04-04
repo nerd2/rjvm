@@ -1,6 +1,8 @@
 [package]
-name = "src"
+name = "rjvm"
 version = "0.1.0"
 authors = ["Sam <sam@gpsm.co.uk>"]
 
 [dependencies]
+glob = "0.2.11"
+byteorder = "1.0.0"
