@@ -5,5 +5,5 @@ mod reader {
 }
 
 pub fn run(filename: &Path) {
-    reader::class::read(filename);
+    reader::class::read(filename).unwrap();
 }
