@@ -26,13 +26,53 @@ pub enum ConstantPoolItem {
     CONSTANT_NameAndType{name_index: u16, descriptor_index: u16},
 }
 
+pub struct AttributeItem {
+    pub name_index: u16,
+    pub info: Vec<u8>
+}
+
+impl AttributeItem {
+    pub fn new() -> AttributeItem {
+        AttributeItem { name_index: 0, info: Vec::new() }
+    }
+}
+
+pub struct FieldItem {
+    pub access_flags: u16,
+    pub name_index: u16,
+    pub descriptor_index: u16,
+    pub attributes: Vec<AttributeItem>
+}
+
+impl FieldItem {
+    pub fn new() -> FieldItem {
+        FieldItem { access_flags: 0, name_index: 0, descriptor_index: 0, attributes: Vec::new() }
+    }
+}
+
 pub struct ClassResult {
-    pub constant_pool: Vec<ConstantPoolItem>
+    pub constant_pool: Vec<ConstantPoolItem>,
+    pub access_flags: u16,
+    pub this_class_index: u16,
+    pub super_class_index: u16,
+    pub interfaces: Vec<u16>,
+    pub fields: Vec<FieldItem>,
+    pub methods: Vec<FieldItem>,
+    pub attributes: Vec<AttributeItem>
 }
 
 impl ClassResult {
     pub fn new() -> ClassResult {
-        ClassResult { constant_pool: Vec::new() }
+        ClassResult {
+            constant_pool: Vec::new(),
+            access_flags: 0,
+            this_class_index: 0,
+            super_class_index: 0,
+            interfaces: Vec::new(),
+            fields: Vec::new(),
+            methods: Vec::new(),
+            attributes: Vec::new()
+        }
     }
 }
 
@@ -56,6 +96,30 @@ fn base(n: u16) -> u16 {
         out *= 10;
     }
     return out;
+}
+
+fn read_attribute(reader: &mut Read) -> Result<AttributeItem, ClassReadError> {
+    let mut attribute = AttributeItem::new();
+    attribute.name_index = try!(reader.read_u16::<BigEndian>());
+    let length = try!(reader.read_u32::<BigEndian>());
+    try!(reader.take(length as u64).read_to_end(&mut attribute.info));
+    println!("Attribute with name index {} length {:?}", attribute.name_index, attribute.info);
+    return Ok(attribute);
+}
+
+fn read_field(reader: &mut Read) -> Result<FieldItem, ClassReadError> {
+    let mut field = FieldItem::new();
+    field.access_flags = try!(reader.read_u16::<BigEndian>());
+    field.name_index = try!(reader.read_u16::<BigEndian>());
+    field.descriptor_index = try!(reader.read_u16::<BigEndian>());
+
+    println!("Field with name index {} descriptor index {}", field.name_index, field.descriptor_index);
+    let attributes_count = try!(reader.read_u16::<BigEndian>());
+    println!("Field has {} attributes", attributes_count);
+    for i in 0..attributes_count {
+        field.attributes.push(try!(read_attribute(reader)));
+    }
+    return Ok(field);
 }
 
 fn read_constant_pool(reader: &mut Read) -> Result<ConstantPoolItem, ClassReadError> {
@@ -112,10 +176,10 @@ fn read_constant_pool(reader: &mut Read) -> Result<ConstantPoolItem, ClassReadEr
 
 pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
     let file = try!(File::open(filename));
-    let mut buf_reader = BufReader::new(file);
-    let magic = try!(buf_reader.read_u32::<BigEndian>());
-    let minor = try!(buf_reader.read_u16::<BigEndian>());
-    let major = try!(buf_reader.read_u16::<BigEndian>());
+    let mut reader = BufReader::new(file);
+    let magic = try!(reader.read_u32::<BigEndian>());
+    let minor = try!(reader.read_u16::<BigEndian>());
+    let major = try!(reader.read_u16::<BigEndian>());
     let version = (major as f32) + ((minor as f32) / (base(minor) as f32));
 
     if magic != 0xCAFEBABE {
@@ -126,7 +190,7 @@ pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
         return Err(ClassReadError::UnsupportedVersion(version));
     }
 
-    let cp_count = try!(buf_reader.read_u16::<BigEndian>());
+    let cp_count = try!(reader.read_u16::<BigEndian>());
     println!("cp: {}", cp_count);
 
     if cp_count == 0 {
@@ -136,7 +200,37 @@ pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
     let mut ret = ClassResult::new();
 
     for i in 1..cp_count {
-        ret.constant_pool.push(try!(read_constant_pool(&mut buf_reader)));
+        ret.constant_pool.push(try!(read_constant_pool(&mut reader)));
+    }
+
+    ret.access_flags = try!(reader.read_u16::<BigEndian>());
+    println!("access_flags: {}", ret.access_flags);
+    ret.this_class_index = try!(reader.read_u16::<BigEndian>());
+    ret.super_class_index = try!(reader.read_u16::<BigEndian>());
+    println!("class_indexes: {} {}", ret.this_class_index, ret.super_class_index);
+
+    let interfaces_count = try!(reader.read_u16::<BigEndian>());
+    println!("Interface count: {}", interfaces_count);
+    for i in 0..interfaces_count {
+        ret.interfaces.push(try!(reader.read_u16::<BigEndian>()));
+    }
+
+    let fields_count = try!(reader.read_u16::<BigEndian>());
+    println!("Fields count: {}", fields_count);
+    for i in 0..fields_count {
+        ret.fields.push(try!(read_field(&mut reader)));
+    }
+
+    let methods_count = try!(reader.read_u16::<BigEndian>());
+    println!("Methods count: {}", methods_count);
+    for i in 0..methods_count {
+        ret.methods.push(try!(read_field(&mut reader)));
+    }
+
+    let attributes_count = try!(reader.read_u16::<BigEndian>());
+    println!("Attributes count: {}", attributes_count);
+    for i in 0..attributes_count {
+        ret.attributes.push(try!(read_attribute(&mut reader)));
     }
 
     return Ok(ret);
