@@ -1,3 +1,5 @@
+#![macro_escape]
+
 extern crate byteorder;
 
 use std::path::Path;
@@ -10,11 +12,11 @@ use std::string::FromUtf8Error;
 use std::string::String;
 use self::byteorder::{BigEndian, ReadBytesExt};
 
-const PRINT_LEVEL: i32 = 2;
+macro_rules! PRINT_LEVEL { () => {2} }
 
 macro_rules! debugPrint {
-    ($enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL { println!($fmt); } }};
-    ($enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL { println!($fmt, $($arg)*); } }};
+    ($enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { println!($fmt); } }};
+    ($enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL!() { println!($fmt, $($arg)*); } }};
 }
 
 #[derive(Debug)]
@@ -35,6 +37,7 @@ pub enum ConstantPoolItem {
     CONSTANT_InterfaceMethodref{class_index: u16, name_and_type_index: u16},
 }
 
+#[derive(Clone, Debug)]
 pub struct ExceptionItem {
     start_pc: u16,
     end_pc: u16,
@@ -42,6 +45,7 @@ pub struct ExceptionItem {
     catch_type: u16
 }
 
+#[derive(Clone, Debug)]
 pub struct Code {
     pub max_stack: u16,
     pub max_locals: u16,
@@ -50,6 +54,7 @@ pub struct Code {
     pub attributes: Vec<AttributeItem>
 }
 
+#[derive(Clone, Debug)]
 pub enum AttributeItem {
     ConstantValue{index: u16},
     Code(Code),
@@ -58,6 +63,7 @@ pub enum AttributeItem {
     Unknown{name_index: u16, info: Vec<u8>}
 }
 
+#[derive(Clone, Debug)]
 pub struct FieldItem {
     pub access_flags: u16,
     pub name_index: u16,
@@ -71,6 +77,7 @@ impl FieldItem {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct ClassResult {
     pub constant_pool: Vec<ConstantPoolItem>,
     pub access_flags: u16,
@@ -233,7 +240,7 @@ fn read_field(cp: &Vec<ConstantPoolItem>, reader: &mut Read) -> Result<FieldItem
     field.name_index = try!(reader.read_u16::<BigEndian>());
     field.descriptor_index = try!(reader.read_u16::<BigEndian>());
 
-    debugPrint!(true, 3, "Field with name index {} descriptor index {}", field.name_index, field.descriptor_index);
+    debugPrint!(true, 3, "Field with name {} descriptor index {}", try!(get_cp_str(cp, field.name_index)), field.descriptor_index);
     let attributes_count = try!(reader.read_u16::<BigEndian>());
     debugPrint!(true, 3, "Field has {} attributes", attributes_count);
     for _ in 0..attributes_count {

@@ -12,13 +12,13 @@ mod reader {
 pub fn run(filename: &Path) {
     let mut jci_classes: HashMap<String, ClassResult> = HashMap::new();
     for file in glob("jcl/**/*.class").unwrap().filter_map(Result::ok) {
-        let maybeClass = reader::class::read(&file);
+        let maybe_class = reader::class::read(&file);
 
-        if maybeClass.is_ok() {
-            let class = maybeClass.unwrap();
-            let className = String::from(get_cp_class_name(&class.constant_pool, class.this_class_index).unwrap());
-            println!("Loaded class {}", className);
-            jci_classes.insert(className, class);
+        if maybe_class.is_ok() {
+            let class = maybe_class.unwrap();
+            let class_name = String::from(get_cp_class_name(&class.constant_pool, class.this_class_index).unwrap());
+            println!("Loaded class {}", class_name);
+            jci_classes.insert(class_name, class);
         } else {
             println!("Failed to load class");
         }
