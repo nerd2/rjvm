@@ -31,16 +31,16 @@ struct Object {
 
 #[derive(Clone, Debug)]
 enum Variable {
-    Byte(u8),
-    Char(char),
-    Double(f64),
-    Float(f32),
-    Int(u32),
-    Long(u64),
-    Short(u16),
-    Boolean(bool),
-    Reference(Rc<Object>),
-    UnresolvedReference(String),
+    Byte(u32,  u8),
+    Char(u32,  char),
+    Double(u32,  f64),
+    Float(u32,  f32),
+    Int(u32,  u32),
+    Long(u32,  u64),
+    Short(u32,  u16),
+    Boolean(u32,  bool),
+    Reference(u32,  Rc<Object>),
+    UnresolvedReference(u32,  String),
 }
 
 struct Runtime {
@@ -177,7 +177,7 @@ fn run_method(runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerE
                     match *maybe_cp_entry.unwrap() {
                         ConstantPoolItem::CONSTANT_String { index } => {
                             let string_class = try!(find_class(&mut runtime.classes, "java/lang/String", &runtime.class_paths));
-                            runtime.operand_stack.push(Variable::Reference(Rc::new(Object { typeRef: string_class })));
+                            runtime.operand_stack.push(Variable::Reference(0, Rc::new(Object { typeRef: string_class })));
                             debugPrint!(true, 2, "LDC {}", index);
                         }
                         _ => return Err(RunnerError::UnknownOpCode(op_code))
@@ -207,7 +207,6 @@ fn run_method(runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerE
             _ => return Err(RunnerError::UnknownOpCode(op_code))
         }
     }
-    return Ok(());
 }
 
 fn find_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths: &Vec<String>) -> Result<Rc<Class>, RunnerError> {
@@ -220,7 +219,25 @@ fn find_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths:
     }
     debugPrint!(true, 2, "Finding class {} not already loaded", name);
     for class_path in class_paths.iter() {
-        let maybe_glob = glob(class_path);
+        let mut direct_path = class_path.clone();
+        direct_path.push_str(name);
+        direct_path.push_str(".class");
+        let direct_classname = get_classname(Path::new(&direct_path));
+        if direct_classname.is_ok() && direct_classname.unwrap() == name {
+            let maybe_read = read(Path::new(&direct_path));
+            if maybe_read.is_ok() {
+                let maybe_rc = bootstrap_class(classes, name, &maybe_read.unwrap(), class_paths);
+                if maybe_rc.is_ok() {
+                    return maybe_rc;
+                }
+            }
+        }
+        debugPrint!(true, 3, "Finding class {} direct load failed", name);
+
+        // Else try globbing
+        let mut glob_path = class_path.clone();
+        glob_path.push_str("/**/*.class");
+        let maybe_glob = glob(glob_path.as_str());
         if maybe_glob.is_err() {
             debugPrint!(true, 1, "Error globbing class path {}", class_path);
             continue;
@@ -242,7 +259,7 @@ fn find_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths:
             continue;
         }
 
-        let maybe_rc = bootstrap_class(classes, name, &maybe_read.unwrap());
+        let maybe_rc = bootstrap_class(classes, name, &maybe_read.unwrap(), class_paths);
         if maybe_rc.is_err() {
             continue;
         }
@@ -252,10 +269,53 @@ fn find_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths:
     return Err(RunnerError::ClassNotLoaded(String::from(name)));
 }
 
-fn bootstrap_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError> {
+fn bootstrap_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_result: &ClassResult, class_paths: &Vec<String>) -> Result<Rc<Class>, RunnerError> {
     let mut class = Class { cr: class_result.clone(), statics: HashMap::new() };
+    classes.insert(String::from(name), Rc::new(class.clone()));
     for field in &class.cr.fields {
-        class.statics.insert(String::from(get_cp_str(&class.cr.constant_pool, field.name_index).unwrap()), Variable::Int(0));
+        let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
+        let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+        let mut iter = descriptor_string.chars();
+
+        let mut maybe_type_specifier = iter.next();
+
+        if maybe_type_specifier.is_none() {
+            debugPrint!(true, 2, "Type specifier blank");
+            return Err(RunnerError::ClassInvalid);
+        }
+
+        let mut array_depth = 0;
+        while maybe_type_specifier.unwrap_or(' ') == '[' {
+            array_depth = array_depth + 1;
+            maybe_type_specifier = iter.next();
+        }
+
+        if maybe_type_specifier.is_none() {
+            debugPrint!(true, 2, "Type specifier invalid {}", descriptor_string);
+            return Err(RunnerError::ClassInvalid);
+        }
+
+        let mut variable = Variable::Int(array_depth, 0);
+        match maybe_type_specifier.unwrap() {
+            'L' => {
+                let type_string : String = iter.take_while(|x| *x != ';').collect();
+                debugPrint!(true, 0, "bootstrap static {} {}", name_string, type_string);
+                find_class(classes, type_string.as_str(), class_paths);
+            }
+            'B' => variable = Variable::Byte(array_depth, 0),
+            'C' => variable = Variable::Char(array_depth, '\0'),
+            'D' => variable = Variable::Double(array_depth, 0.0),
+            'F' => variable = Variable::Float(array_depth, 0.0),
+            'I' => variable = Variable::Int(array_depth, 0),
+            'J' => variable = Variable::Long(array_depth, 0),
+            'S' => variable = Variable::Short(array_depth, 0),
+            'Z' => variable = Variable::Boolean(array_depth, false),
+            _ => {
+                debugPrint!(true, 1, "Type string {} for {} unrecognised", descriptor_string, name_string);
+                return Err(RunnerError::ClassInvalid);
+            }
+        }
+        class.statics.insert(String::from(name_string), variable);
     }
     let rc = Rc::new(class);
     classes.insert(String::from(name), rc.clone());
@@ -273,7 +333,7 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
         classes: HashMap::new(),
     };
 
-    bootstrap_class(&mut runtime.classes, String::new().as_str(), class);
+    bootstrap_class(&mut runtime.classes, String::new().as_str(), class, class_paths);
 
     for method in &class.methods {
         if try!(get_cp_str(&runtime.constant_pool, method.name_index)) == "main" &&

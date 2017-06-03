@@ -8,8 +8,7 @@ mod reader {
 
 pub fn run(filename: &Path) {
     let mut class_paths: Vec<String> = Vec::new();
-    class_paths.push(String::from("/Users/sam/Personal/javart/java/lang/String.class"));
-    class_paths.push(String::from("/Users/sam/Personal/javart/java/lang/System.class"));
+    class_paths.push(String::from("/Users/sam/Personal/javart/"));
     let class_result = reader::class::read(filename).unwrap();
     reader::runner::run(&class_paths, &class_result).unwrap();
 }

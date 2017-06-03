@@ -41,6 +41,9 @@ pub enum ConstantPoolItem {
     CONSTANT_Methodref{class_index: u16, name_and_type_index: u16},
     CONSTANT_NameAndType{name_index: u16, descriptor_index: u16},
     CONSTANT_InterfaceMethodref{class_index: u16, name_and_type_index: u16},
+    CONSTANT_MethodHandle{reference_kind: u8, reference_index: u16},
+    CONSTANT_MethodType{descriptor_index: u16},
+    CONSTANT_InvokeDynamic{bootstrap_method_attr_index: u16, name_and_type_index: u16},
 }
 
 #[derive(Clone, Debug)]
@@ -164,6 +167,7 @@ pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str
 pub fn get_cp_class_name(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str, ClassReadError> {
     let maybe_cp_entry = cp.get(&index);
     if maybe_cp_entry.is_none() {
+        debugPrint!(true, 3, "Constant pool item at index {} does not exist", index);
         return Err(ClassReadError::Parse);
     } else {
         match *maybe_cp_entry.unwrap() {
@@ -283,7 +287,6 @@ fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<Consta
             // CONSTANT_Float
             let value : f32 = unsafe { transmute(try!(reader.read_u32::<BigEndian>())) };
             debugPrint!(debug, 3, "Float {}", value);
-            *entry_count = 2;
             return Ok(ConstantPoolItem::CONSTANT_Float{value: value});
         },
         5 => {
@@ -295,6 +298,7 @@ fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<Consta
         6 => {
             let value : f64 = unsafe { transmute(try!(reader.read_u64::<BigEndian>())) };
             debugPrint!(debug, 3, "Double {}", value);
+            *entry_count = 2;
             return Ok(ConstantPoolItem::CONSTANT_Double{value: value});
         },
         7 => {
@@ -337,6 +341,26 @@ fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<Consta
             debugPrint!(debug, 3, "NameAndType {} {}", name_index, descriptor_index);
             return Ok(ConstantPoolItem::CONSTANT_NameAndType{name_index: name_index, descriptor_index: descriptor_index});
         }
+        15 => {
+            // CONSTANT_MethodHandle
+            let reference_kind = try!(reader.read_u8());
+            let reference_index = try!(reader.read_u16::<BigEndian>());
+            debugPrint!(debug, 3, "MethodHandle {} {}", reference_kind, reference_index);
+            return Ok(ConstantPoolItem::CONSTANT_MethodHandle{reference_kind: reference_kind, reference_index: reference_index});
+        }
+        16 => {
+            // CONSTANT_MethodType
+            let descriptor_index = try!(reader.read_u16::<BigEndian>());
+            debugPrint!(debug, 3, "MethodType {}", descriptor_index);
+            return Ok(ConstantPoolItem::CONSTANT_MethodType{descriptor_index: descriptor_index});
+        }
+        18 => {
+            // CONSTANT_InvokeDynamic
+            let bootstrap_method_attr_index = try!(reader.read_u16::<BigEndian>());
+            let name_and_type_index = try!(reader.read_u16::<BigEndian>());
+            debugPrint!(debug, 3, "InvokeDynamic {} {}", bootstrap_method_attr_index, name_and_type_index);
+            return Ok(ConstantPoolItem::CONSTANT_InvokeDynamic{bootstrap_method_attr_index: bootstrap_method_attr_index, name_and_type_index: name_and_type_index});
+        }
         _ => {
             debugPrint!(debug, 3, "unknown tag: {}", tag);
             return Err(ClassReadError::Parse);
@@ -371,6 +395,7 @@ fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, Clas
 
     let mut i = 1;
     while i < cp_count {
+        debugPrint!(true, 5, "{}", i);
         let mut entry_count : u16 = 1;
         ret.constant_pool.insert(i, try!(read_constant_pool(&mut reader, &mut entry_count)));
         i += entry_count;
