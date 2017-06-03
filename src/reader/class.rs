@@ -5,6 +5,8 @@ extern crate byteorder;
 use std::path::Path;
 use std::fs::File;
 use std::str;
+use std::mem::transmute;
+use std::collections::HashMap;
 use std::io;
 use std::io::Read;
 use std::io::BufReader;
@@ -30,6 +32,10 @@ pub enum ClassReadError {
 pub enum ConstantPoolItem {
     CONSTANT_Utf8(String),
     CONSTANT_Class{index: u16},
+    CONSTANT_Integer{value: u32},
+    CONSTANT_Long{value: u64},
+    CONSTANT_Float{value: f32},
+    CONSTANT_Double{value: f64},
     CONSTANT_String{index: u16},
     CONSTANT_Fieldref{class_index: u16, name_and_type_index: u16},
     CONSTANT_Methodref{class_index: u16, name_and_type_index: u16},
@@ -79,7 +85,7 @@ impl FieldItem {
 
 #[derive(Clone, Debug)]
 pub struct ClassResult {
-    pub constant_pool: Vec<ConstantPoolItem>,
+    pub constant_pool: HashMap<u16, ConstantPoolItem>,
     pub access_flags: u16,
     pub this_class_index: u16,
     pub super_class_index: u16,
@@ -94,7 +100,7 @@ pub struct ClassResult {
 impl ClassResult {
     pub fn new() -> ClassResult {
         ClassResult {
-            constant_pool: Vec::new(),
+            constant_pool: HashMap::new(),
             access_flags: 0,
             this_class_index: 0,
             super_class_index: 0,
@@ -138,37 +144,41 @@ fn read_exception(reader: &mut Read) -> Result<ExceptionItem, ClassReadError> {
     return Ok(ExceptionItem {start_pc: start_pc, end_pc: end_pc, handler_pc: handler_pc, catch_type: catch_type});
 }
 
-pub fn get_cp_str(cp: &Vec<ConstantPoolItem>, index:u16) -> Result<&str, ClassReadError> {
-    if index == 0 || index as usize > cp.len() {
+pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str, ClassReadError> {
+    let maybe_cp_entry = cp.get(&index);
+    if maybe_cp_entry.is_none() {
         return Err(ClassReadError::Parse);
     } else {
-        match cp[(index - 1) as usize] {
+        match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Utf8(ref s) => {
                 return Ok(&s);
             }
             _ => {
+                debugPrint!(true, 3, "Constant pool item at index {} is not UTF8, actually {:?}", index, maybe_cp_entry.unwrap());
                 return Err(ClassReadError::Parse);
             }
         }
     }
 }
 
-pub fn get_cp_class_name(cp: &Vec<ConstantPoolItem>, index:u16) -> Result<&str, ClassReadError> {
-    if index == 0 || index as usize > cp.len() {
+pub fn get_cp_class_name(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str, ClassReadError> {
+    let maybe_cp_entry = cp.get(&index);
+    if maybe_cp_entry.is_none() {
         return Err(ClassReadError::Parse);
     } else {
-        match cp[(index - 1) as usize] {
+        match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Class {index: name_index} => {
                 return get_cp_str(cp, name_index);
             }
             _ => {
+                debugPrint!(true, 3, "Constant pool item at index {} is not a class, actually {:?}", index, maybe_cp_entry.unwrap());
                 return Err(ClassReadError::Parse);
             }
         }
     }
 }
 
-fn read_attribute(cp: &Vec<ConstantPoolItem>, reader: &mut Read) -> Result<AttributeItem, ClassReadError> {
+fn read_attribute(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Result<AttributeItem, ClassReadError> {
     let name_index = try!(reader.read_u16::<BigEndian>());
     let length = try!(reader.read_u32::<BigEndian>());
     let attribute_name = try!(get_cp_str(cp, name_index));
@@ -234,7 +244,7 @@ fn read_attribute(cp: &Vec<ConstantPoolItem>, reader: &mut Read) -> Result<Attri
     }
 }
 
-fn read_field(cp: &Vec<ConstantPoolItem>, reader: &mut Read) -> Result<FieldItem, ClassReadError> {
+fn read_field(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Result<FieldItem, ClassReadError> {
     let mut field = FieldItem::new();
     field.access_flags = try!(reader.read_u16::<BigEndian>());
     field.name_index = try!(reader.read_u16::<BigEndian>());
@@ -249,9 +259,10 @@ fn read_field(cp: &Vec<ConstantPoolItem>, reader: &mut Read) -> Result<FieldItem
     return Ok(field);
 }
 
-fn read_constant_pool(reader: &mut Read) -> Result<ConstantPoolItem, ClassReadError> {
-    let debug = false;
+fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<ConstantPoolItem, ClassReadError> {
+    let debug = true;
     let tag = try!(reader.read_u8());
+    *entry_count = 1;
     match tag {
         1 => {
             // CONSTANT_Utf8
@@ -261,7 +272,31 @@ fn read_constant_pool(reader: &mut Read) -> Result<ConstantPoolItem, ClassReadEr
             let string = try!(String::from_utf8(buf));
             debugPrint!(debug, 3, "UTF8 {} '{}'", length, string);
             return Ok(ConstantPoolItem::CONSTANT_Utf8(string));
-        }
+        },
+        3 => {
+            // CONSTANT_Integer
+            let value = try!(reader.read_u32::<BigEndian>());
+            debugPrint!(debug, 3, "Int {}", value);
+            return Ok(ConstantPoolItem::CONSTANT_Integer{value: value});
+        },
+        4 => {
+            // CONSTANT_Float
+            let value : f32 = unsafe { transmute(try!(reader.read_u32::<BigEndian>())) };
+            debugPrint!(debug, 3, "Float {}", value);
+            *entry_count = 2;
+            return Ok(ConstantPoolItem::CONSTANT_Float{value: value});
+        },
+        5 => {
+            let value = try!(reader.read_u64::<BigEndian>());
+            debugPrint!(debug, 3, "Long {}", value);
+            *entry_count = 2;
+            return Ok(ConstantPoolItem::CONSTANT_Long{value: value});
+        },
+        6 => {
+            let value : f64 = unsafe { transmute(try!(reader.read_u64::<BigEndian>())) };
+            debugPrint!(debug, 3, "Double {}", value);
+            return Ok(ConstantPoolItem::CONSTANT_Double{value: value});
+        },
         7 => {
             // CONSTANT_Class
             let class_index = try!(reader.read_u16::<BigEndian>());
@@ -309,8 +344,7 @@ fn read_constant_pool(reader: &mut Read) -> Result<ConstantPoolItem, ClassReadEr
     }
 }
 
-pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
-    debugPrint!(true, 2, "Reading file {}", filename.display());
+fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, ClassResult), ClassReadError> {
     let file = try!(File::open(filename));
     let mut reader = BufReader::new(file);
     let magic = try!(reader.read_u32::<BigEndian>());
@@ -319,29 +353,45 @@ pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
     let version = (major as f32) + ((minor as f32) / (base(minor) as f32));
 
     if magic != 0xCAFEBABE {
-        return Err(ClassReadError::Parse);
+    return Err(ClassReadError::Parse);
     }
 
     if major < 45 || major > 52 {
-        return Err(ClassReadError::UnsupportedVersion(version));
+    return Err(ClassReadError::UnsupportedVersion(version));
     }
 
     let cp_count = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 2, "cp: {}", cp_count);
+    debugPrint!(true, 3, "cp: {}", cp_count);
 
     if cp_count == 0 {
-        return Err(ClassReadError::Parse);
+    return Err(ClassReadError::Parse);
     }
 
     let mut ret = ClassResult::new();
 
-    for _ in 1..cp_count {
-        ret.constant_pool.push(try!(read_constant_pool(&mut reader)));
+    let mut i = 1;
+    while i < cp_count {
+        let mut entry_count : u16 = 1;
+        ret.constant_pool.insert(i, try!(read_constant_pool(&mut reader, &mut entry_count)));
+        i += entry_count;
     }
 
     ret.access_flags = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 2, "access_flags: {}", ret.access_flags);
+    debugPrint!(true, 3, "access_flags: {}", ret.access_flags);
     ret.this_class_index = try!(reader.read_u16::<BigEndian>());
+    return Ok((reader, ret));
+}
+
+pub fn get_classname(filename: &Path) -> Result<String, ClassReadError> {
+    let (reader, ret) = try!(read_up_to_my_class_details(filename));
+    let class_name = String::from(try!(get_cp_class_name(&ret.constant_pool, ret.this_class_index)));
+    return Ok(class_name);
+}
+
+pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
+    debugPrint!(true, 2, "Reading file {}", filename.display());
+    let (mut reader, mut ret) = try!(read_up_to_my_class_details(filename));
+
     ret.super_class_index = try!(reader.read_u16::<BigEndian>());
     debugPrint!(true, 2, "class_indexes: {} {}", ret.this_class_index, ret.super_class_index);
 

@@ -5,6 +5,9 @@ use std::io;
 use std::io::Cursor;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::path::{Path, PathBuf};
+use glob::glob;
+
 use self::byteorder::{BigEndian, ReadBytesExt};
 
 #[derive(Debug)]
@@ -15,24 +18,36 @@ pub enum RunnerError {
     ClassNotLoaded(String)
 }
 
+#[derive(Clone, Debug)]
 struct Class {
     cr: ClassResult,
     statics: HashMap<String, Variable>
 }
 
+#[derive(Clone, Debug)]
 struct Object {
-    typee: Rc<Class>
+    typeRef: Rc<Class>
 }
 
+#[derive(Clone, Debug)]
 enum Variable {
-    Primative(u64),
-    Reference(Rc<Object>)
+    Byte(u8),
+    Char(char),
+    Double(f64),
+    Float(f32),
+    Int(u32),
+    Long(u64),
+    Short(u16),
+    Boolean(bool),
+    Reference(Rc<Object>),
+    UnresolvedReference(String),
 }
 
 struct Runtime {
-    constant_pool: Vec<ConstantPoolItem>,
+    class_paths: Vec<String>,
+    constant_pool: HashMap<u16, ConstantPoolItem>,
     operand_stack: Vec<Variable>,
-    classes: HashMap<String, Class>
+    classes: HashMap<String, Rc<Class>>
 }
 
 impl From<io::Error> for RunnerError {
@@ -41,11 +56,12 @@ impl From<io::Error> for RunnerError {
     }
 }
 
-fn get_cp_str(constant_pool: &Vec<ConstantPoolItem>, index:u16) -> Result<&str, RunnerError> {
-    if index == 0 || index as usize > constant_pool.len() {
+fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str, RunnerError> {
+    let maybe_cp_entry = constant_pool.get(&index);
+    if maybe_cp_entry.is_none() {
         return Err(RunnerError::ClassInvalid);
     } else {
-        match constant_pool[(index - 1) as usize] {
+        match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Utf8(ref s) => {
                 return Ok(&s);
             }
@@ -56,13 +72,14 @@ fn get_cp_str(constant_pool: &Vec<ConstantPoolItem>, index:u16) -> Result<&str, 
     }
 }
 
-fn load_class(constant_pool: &Vec<ConstantPoolItem>, index: u16) -> Result<&str, RunnerError> {
+fn load_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<&str, RunnerError> {
     debugPrint!(false, 5, "{}", index);
 
-    if index == 0 || index as usize > constant_pool.len() {
+    let maybe_cp_entry = constant_pool.get(&index);
+    if maybe_cp_entry.is_none() {
         return Err(RunnerError::ClassInvalid);
     } else {
-        match constant_pool[(index - 1) as usize] {
+        match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Class {index} => {
                 debugPrint!(false, 4, "name_index: {}", index);
 
@@ -78,13 +95,14 @@ fn load_class(constant_pool: &Vec<ConstantPoolItem>, index: u16) -> Result<&str,
     }
 }
 
-fn load_name_and_type(constant_pool: &Vec<ConstantPoolItem>, index: u16) -> Result<(&str, &str), RunnerError> {
+fn load_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str), RunnerError> {
     debugPrint!(false, 5, "{}", index);
 
-    if index == 0 || index as usize > constant_pool.len() {
+    let maybe_cp_entry = constant_pool.get(&index);
+    if maybe_cp_entry.is_none() {
         return Err(RunnerError::ClassInvalid);
     } else {
-        match constant_pool[(index - 1) as usize] {
+        match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_NameAndType {name_index, descriptor_index} => {
                 debugPrint!(false, 4, "name_index: {}, descriptor_index: {}", name_index, descriptor_index);
 
@@ -101,12 +119,13 @@ fn load_name_and_type(constant_pool: &Vec<ConstantPoolItem>, index: u16) -> Resu
     }
 }
 
-fn load_field(constant_pool: &Vec<ConstantPoolItem>, index: u16) -> Result<(&str, &str, &str), RunnerError> {
+fn load_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str, &str), RunnerError> {
     debugPrint!(false, 5, "{}", index);
-    if index == 0 || index as usize > constant_pool.len() {
+    let maybe_cp_entry = constant_pool.get(&index);
+    if maybe_cp_entry.is_none() {
         return Err(RunnerError::ClassInvalid);
     } else {
-        match constant_pool[(index - 1) as usize] {
+        match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Fieldref{class_index, name_and_type_index} => {
                 let class_str = try!(load_class(constant_pool, class_index));
                 let (name_str, type_str) = try!(load_name_and_type(constant_pool, name_and_type_index));
@@ -120,12 +139,13 @@ fn load_field(constant_pool: &Vec<ConstantPoolItem>, index: u16) -> Result<(&str
     }
 }
 
-fn load_method(constant_pool: &Vec<ConstantPoolItem>, index: u16) -> Result<(&str, &str, &str), RunnerError> {
+fn load_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str, &str), RunnerError> {
     debugPrint!(false, 5, "{}", index);
-    if index == 0 || index as usize > constant_pool.len() {
+    let maybe_cp_entry = constant_pool.get(&index);
+    if maybe_cp_entry.is_none() {
         return Err(RunnerError::ClassInvalid);
     } else {
-        match constant_pool[(index - 1) as usize] {
+        match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Methodref {class_index, name_and_type_index} => {
                 let class_str = try!(load_class(constant_pool, class_index));
                 let (name_str, type_str) = try!(load_name_and_type(constant_pool, name_and_type_index));
@@ -139,7 +159,7 @@ fn load_method(constant_pool: &Vec<ConstantPoolItem>, index: u16) -> Result<(&st
     }
 }
 
-fn run_method(jci: &HashMap<String, ClassResult>, runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
+fn run_method(runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
         return Err(RunnerError::InvalidPc);
     }
@@ -148,14 +168,20 @@ fn run_method(jci: &HashMap<String, ClassResult>, runtime: &mut Runtime, code: &
     loop {
         let op_code = try!(buf.read_u8());
         match op_code {
-            18 => {
+            18 => { // LDC
                 let index = try!(buf.read_u8());
-                match runtime.constant_pool[(index - 1) as usize] {
-                    ConstantPoolItem::CONSTANT_String{index} => {
-                        //runtime.operand_stack.push(Variable::Reference(Object{typee: Rc::new(Class {c})}));
-                        debugPrint!(true, 2, "LDC {}", index);
+                let maybe_cp_entry = runtime.constant_pool.get(&(index as u16));
+                if maybe_cp_entry.is_none() {
+                    return Err(RunnerError::ClassInvalid);
+                } else {
+                    match *maybe_cp_entry.unwrap() {
+                        ConstantPoolItem::CONSTANT_String { index } => {
+                            let string_class = try!(find_class(&mut runtime.classes, "java/lang/String", &runtime.class_paths));
+                            runtime.operand_stack.push(Variable::Reference(Rc::new(Object { typeRef: string_class })));
+                            debugPrint!(true, 2, "LDC {}", index);
+                        }
+                        _ => return Err(RunnerError::UnknownOpCode(op_code))
                     }
-                    _ => return Err(RunnerError::UnknownOpCode(op_code))
                 }
             }
             177 => { // return
@@ -166,16 +192,12 @@ fn run_method(jci: &HashMap<String, ClassResult>, runtime: &mut Runtime, code: &
                 let index = try!(buf.read_u16::<BigEndian>());
                 let (class_name, field_name, typ) = try!(load_field(&runtime.constant_pool, index));
                 debugPrint!(true, 2, "GETSTATIC {} {} {}", class_name, field_name, typ);
-                let maybe_class_result = jci.get(class_name);
-                if maybe_class_result.is_none() {
-                    return Err(RunnerError::ClassNotLoaded(String::from(class_name)));
-                }
-                bootstrap_class(&mut runtime.classes, class_name, maybe_class_result.unwrap());
+                let class_result = try!(find_class(&mut runtime.classes, class_name, &runtime.class_paths));
                 let maybe_static_variable = runtime.classes.get(class_name).unwrap().statics.get(field_name);
                 if maybe_static_variable.is_none() {
                     return Err(RunnerError::ClassNotLoaded(String::from(class_name)));
                 }
-                runtime.operand_stack.push(Variable::Primative(0));
+                runtime.operand_stack.push(maybe_static_variable.unwrap().clone());
             }
             182 => {  // invokevirtual
                 let index = try!(buf.read_u16::<BigEndian>());
@@ -188,23 +210,68 @@ fn run_method(jci: &HashMap<String, ClassResult>, runtime: &mut Runtime, code: &
     return Ok(());
 }
 
-fn bootstrap_class(classes: &mut HashMap<String, Class>, name: &str, class_result: &ClassResult) {
-    if classes.get(name).is_some() {
-        // Already bootstrapped
-        return;
+fn find_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths: &Vec<String>) -> Result<Rc<Class>, RunnerError> {
+    {
+        let maybe_class = classes.get(name);
+        if maybe_class.is_some() {
+            // Already bootstrapped
+            return Ok(maybe_class.unwrap().clone());
+        }
     }
-    let mut class = Class {cr: class_result.clone(), statics: HashMap::new()};
-    for field in &class.cr.fields {
-        class.statics.insert(String::from(get_cp_str(&class_result.constant_pool, field.name_index).unwrap()), Variable::Primative(0));
+    debugPrint!(true, 2, "Finding class {} not already loaded", name);
+    for class_path in class_paths.iter() {
+        let maybe_glob = glob(class_path);
+        if maybe_glob.is_err() {
+            debugPrint!(true, 1, "Error globbing class path {}", class_path);
+            continue;
+        }
+
+        let class_match = maybe_glob.unwrap()
+            .filter_map(Result::ok)
+            .filter(|x| { let classname = get_classname(&x); return classname.is_ok() && classname.unwrap() == name; } )
+            .nth(0);
+
+        if class_match.is_none() {
+            debugPrint!(true, 2, "Could not find {} on class path {}", name, class_path);
+            continue;
+        }
+
+        let maybe_read = read(&class_match.unwrap());
+        if maybe_read.is_err() {
+            debugPrint!(true, 1, "Error reading class {} on class path {}", name, class_path);
+            continue;
+        }
+
+        let maybe_rc = bootstrap_class(classes, name, &maybe_read.unwrap());
+        if maybe_rc.is_err() {
+            continue;
+        }
+
+        return maybe_rc;
     }
-    classes.insert(String::from(name), class);
+    return Err(RunnerError::ClassNotLoaded(String::from(name)));
 }
 
-pub fn run(jci: &HashMap<String, ClassResult>, class: &ClassResult) -> Result<(), RunnerError> {
+fn bootstrap_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError> {
+    let mut class = Class { cr: class_result.clone(), statics: HashMap::new() };
+    for field in &class.cr.fields {
+        class.statics.insert(String::from(get_cp_str(&class.cr.constant_pool, field.name_index).unwrap()), Variable::Int(0));
+    }
+    let rc = Rc::new(class);
+    classes.insert(String::from(name), rc.clone());
+    return Ok(rc);
+}
+
+pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
     println!("Running");
     let mut main_method_res : Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid);
 
-    let mut runtime = Runtime {constant_pool: class.constant_pool.to_vec(), operand_stack: Vec::new(), classes: HashMap::new()};
+    let mut runtime = Runtime {
+        class_paths: class_paths.clone(),
+        constant_pool: class.constant_pool.clone(),
+        operand_stack: Vec::new(),
+        classes: HashMap::new(),
+    };
 
     bootstrap_class(&mut runtime.classes, String::new().as_str(), class);
 
@@ -222,7 +289,7 @@ pub fn run(jci: &HashMap<String, ClassResult>, class: &ClassResult) -> Result<()
             match x { &AttributeItem::Code(ref c) => Some(c), _ => None })
         .nth(0).ok_or(RunnerError::ClassInvalid));
 
-    try!(run_method(jci, &mut runtime, main_code, 0));
+    try!(run_method(&mut runtime, main_code, 0));
 
     return Ok(());
 }
