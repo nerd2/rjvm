@@ -14,11 +14,11 @@ use std::string::FromUtf8Error;
 use std::string::String;
 use self::byteorder::{BigEndian, ReadBytesExt};
 
-macro_rules! PRINT_LEVEL { () => {2} }
+macro_rules! PRINT_LEVEL { () => {3} }
 
 macro_rules! debugPrint {
-    ($enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { println!($fmt); } }};
-    ($enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL!() { println!($fmt, $($arg)*); } }};
+    ($enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for n in 1..$level {print!(" "); } println!($fmt); } }};
+    ($enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL!() { for n in 1..$level {print!(" "); } println!($fmt, $($arg)*); } }};
 }
 
 #[derive(Debug)]
@@ -71,6 +71,16 @@ pub enum AttributeItem {
     Exceptions{indicies: Vec<u16>},
     Unknown{name_index: u16, info: Vec<u8>}
 }
+
+pub const ACC_PUBLIC: u16 = 0x0001;
+pub const ACC_PRIVATE: u16 = 0x0002;
+pub const ACC_PROTECTED: u16 = 0x0004;
+pub const ACC_STATIC: u16 = 0x0008;
+pub const ACC_FINAL: u16 = 0x0010;
+pub const ACC_VOLATILE: u16 = 0x0040;
+pub const ACC_TRANSIENT: u16 = 0x0080;
+pub const ACC_SYNTHETIC: u16 = 0x1000;
+pub const ACC_ENUM: u16 = 0x4000;
 
 #[derive(Clone, Debug)]
 pub struct FieldItem {
@@ -157,7 +167,7 @@ pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str
                 return Ok(&s);
             }
             _ => {
-                debugPrint!(true, 3, "Constant pool item at index {} is not UTF8, actually {:?}", index, maybe_cp_entry.unwrap());
+                debugPrint!(true, 4, "Constant pool item at index {} is not UTF8, actually {:?}", index, maybe_cp_entry.unwrap());
                 return Err(ClassReadError::Parse);
             }
         }
@@ -167,7 +177,7 @@ pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str
 pub fn get_cp_class_name(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str, ClassReadError> {
     let maybe_cp_entry = cp.get(&index);
     if maybe_cp_entry.is_none() {
-        debugPrint!(true, 3, "Constant pool item at index {} does not exist", index);
+        debugPrint!(true, 4, "Constant pool item at index {} does not exist", index);
         return Err(ClassReadError::Parse);
     } else {
         match *maybe_cp_entry.unwrap() {
@@ -175,7 +185,7 @@ pub fn get_cp_class_name(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Resu
                 return get_cp_str(cp, name_index);
             }
             _ => {
-                debugPrint!(true, 3, "Constant pool item at index {} is not a class, actually {:?}", index, maybe_cp_entry.unwrap());
+                debugPrint!(true, 4, "Constant pool item at index {} is not a class, actually {:?}", index, maybe_cp_entry.unwrap());
                 return Err(ClassReadError::Parse);
             }
         }
@@ -192,7 +202,7 @@ fn read_attribute(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Res
                 return Err(ClassReadError::Parse);
             } else {
                 let index = try!(reader.read_u16::<BigEndian>());
-                debugPrint!(true, 3, "ConstantValue attribute with index of {}", index);
+                debugPrint!(true, 4, "ConstantValue attribute with index of {}", index);
                 return Ok(AttributeItem::ConstantValue {index: index});
             }
         }
@@ -212,7 +222,7 @@ fn read_attribute(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Res
             for _ in 0..attributes_count {
                 attributes.push(try!(read_attribute(cp, reader)));
             }
-            debugPrint!(true, 3, "Code attribute with {}B of code, {} exceptions and {} attributes", code_length, exception_table_length, attributes_count);
+            debugPrint!(true, 4, "Code attribute with {}B of code, {} exceptions and {} attributes", code_length, exception_table_length, attributes_count);
 
             return Ok(AttributeItem::Code(Code {
                 max_stack: max_stack, max_locals: max_locals, code: code, exceptions: exceptions, attributes: attributes
@@ -224,25 +234,25 @@ fn read_attribute(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Res
             for _ in 0..num_exceptions {
                 indicies.push(try!(reader.read_u16::<BigEndian>()));
             }
-            debugPrint!(true, 3, "Exceptions attribute with {} indicies", num_exceptions);
+            debugPrint!(true, 4, "Exceptions attribute with {} indicies", num_exceptions);
 
             return Ok(AttributeItem::Exceptions {indicies: indicies})
         }
         "LineNumberTable" => {
             let mut info = Vec::new();
             try!(reader.take(length as u64).read_to_end(&mut info));
-            debugPrint!(true, 3, "Ignoring 'LineNumberTable' attribute");
+            debugPrint!(true, 4, "Ignoring 'LineNumberTable' attribute");
             return Ok(AttributeItem::Unknown {name_index: name_index, info: info});
         }
         "Signature" => {
             let signature_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(true, 3, "Signature attribute with index {}", signature_index);
+            debugPrint!(true, 4, "Signature attribute with index {}", signature_index);
             return Ok(AttributeItem::Signature {index: signature_index});
         }
         _ => {
             let mut info = Vec::new();
             try!(reader.take(length as u64).read_to_end(&mut info));
-            debugPrint!(true, 3, "Unknown attribute with name {} data {:?}", attribute_name, info);
+            debugPrint!(true, 4, "Unknown attribute with name {} data {:?}", attribute_name, info);
             return Ok(AttributeItem::Unknown {name_index: name_index, info: info});
         }
     }
@@ -254,9 +264,9 @@ fn read_field(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Result<
     field.name_index = try!(reader.read_u16::<BigEndian>());
     field.descriptor_index = try!(reader.read_u16::<BigEndian>());
 
-    debugPrint!(true, 3, "Field with name {} descriptor index {}", try!(get_cp_str(cp, field.name_index)), field.descriptor_index);
+    debugPrint!(true, 4, "Field with name {} descriptor index {}", try!(get_cp_str(cp, field.name_index)), field.descriptor_index);
     let attributes_count = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 3, "Field has {} attributes", attributes_count);
+    debugPrint!(true, 4, "Field has {} attributes", attributes_count);
     for _ in 0..attributes_count {
         field.attributes.push(try!(read_attribute(cp, reader)));
     }
@@ -274,95 +284,95 @@ fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<Consta
             let mut buf: Vec<u8> = Vec::new();
             try!(reader.take(length as u64).read_to_end(&mut buf));
             let string = try!(String::from_utf8(buf));
-            debugPrint!(debug, 3, "UTF8 {} '{}'", length, string);
+            debugPrint!(debug, 4, "UTF8 {} '{}'", length, string);
             return Ok(ConstantPoolItem::CONSTANT_Utf8(string));
         },
         3 => {
             // CONSTANT_Integer
             let value = try!(reader.read_u32::<BigEndian>());
-            debugPrint!(debug, 3, "Int {}", value);
+            debugPrint!(debug, 4, "Int {}", value);
             return Ok(ConstantPoolItem::CONSTANT_Integer{value: value});
         },
         4 => {
             // CONSTANT_Float
             let value : f32 = unsafe { transmute(try!(reader.read_u32::<BigEndian>())) };
-            debugPrint!(debug, 3, "Float {}", value);
+            debugPrint!(debug, 4, "Float {}", value);
             return Ok(ConstantPoolItem::CONSTANT_Float{value: value});
         },
         5 => {
             let value = try!(reader.read_u64::<BigEndian>());
-            debugPrint!(debug, 3, "Long {}", value);
+            debugPrint!(debug, 4, "Long {}", value);
             *entry_count = 2;
             return Ok(ConstantPoolItem::CONSTANT_Long{value: value});
         },
         6 => {
             let value : f64 = unsafe { transmute(try!(reader.read_u64::<BigEndian>())) };
-            debugPrint!(debug, 3, "Double {}", value);
+            debugPrint!(debug, 4, "Double {}", value);
             *entry_count = 2;
             return Ok(ConstantPoolItem::CONSTANT_Double{value: value});
         },
         7 => {
             // CONSTANT_Class
             let class_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "Class ref {}", class_index);
+            debugPrint!(debug, 4, "Class ref {}", class_index);
             return Ok(ConstantPoolItem::CONSTANT_Class{index: class_index});
         },
         8 => {
             // CONSTANT_String
             let string_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "String ref {}", string_index);
+            debugPrint!(debug, 4, "String ref {}", string_index);
             return Ok(ConstantPoolItem::CONSTANT_String{index:string_index});
         },
         9 => {
             // CONSTANT_Fieldref
             let class_index = try!(reader.read_u16::<BigEndian>());
             let name_and_type_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "Field ref {} {}", class_index, name_and_type_index);
+            debugPrint!(debug, 4, "Field ref {} {}", class_index, name_and_type_index);
             return Ok(ConstantPoolItem::CONSTANT_Fieldref{class_index: class_index, name_and_type_index: name_and_type_index});
         },
         10 => {
             // CONSTANT_Methodref
             let class_index = try!(reader.read_u16::<BigEndian>());
             let name_and_type_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "Method ref {} {}", class_index, name_and_type_index);
+            debugPrint!(debug, 4, "Method ref {} {}", class_index, name_and_type_index);
             return Ok(ConstantPoolItem::CONSTANT_Methodref{class_index: class_index, name_and_type_index: name_and_type_index});
         },
         11 => {
             // CONSTANT_InterfaceMethodref
             let class_index = try!(reader.read_u16::<BigEndian>());
             let name_and_type_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "Interface ref {} {}", class_index, name_and_type_index);
+            debugPrint!(debug, 4, "Interface ref {} {}", class_index, name_and_type_index);
             return Ok(ConstantPoolItem::CONSTANT_InterfaceMethodref{class_index: class_index, name_and_type_index: name_and_type_index});
         }
         12 => {
             // CONSTANT_NameAndType
             let name_index = try!(reader.read_u16::<BigEndian>());
             let descriptor_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "NameAndType {} {}", name_index, descriptor_index);
+            debugPrint!(debug, 4, "NameAndType {} {}", name_index, descriptor_index);
             return Ok(ConstantPoolItem::CONSTANT_NameAndType{name_index: name_index, descriptor_index: descriptor_index});
         }
         15 => {
             // CONSTANT_MethodHandle
             let reference_kind = try!(reader.read_u8());
             let reference_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "MethodHandle {} {}", reference_kind, reference_index);
+            debugPrint!(debug, 4, "MethodHandle {} {}", reference_kind, reference_index);
             return Ok(ConstantPoolItem::CONSTANT_MethodHandle{reference_kind: reference_kind, reference_index: reference_index});
         }
         16 => {
             // CONSTANT_MethodType
             let descriptor_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "MethodType {}", descriptor_index);
+            debugPrint!(debug, 4, "MethodType {}", descriptor_index);
             return Ok(ConstantPoolItem::CONSTANT_MethodType{descriptor_index: descriptor_index});
         }
         18 => {
             // CONSTANT_InvokeDynamic
             let bootstrap_method_attr_index = try!(reader.read_u16::<BigEndian>());
             let name_and_type_index = try!(reader.read_u16::<BigEndian>());
-            debugPrint!(debug, 3, "InvokeDynamic {} {}", bootstrap_method_attr_index, name_and_type_index);
+            debugPrint!(debug, 4, "InvokeDynamic {} {}", bootstrap_method_attr_index, name_and_type_index);
             return Ok(ConstantPoolItem::CONSTANT_InvokeDynamic{bootstrap_method_attr_index: bootstrap_method_attr_index, name_and_type_index: name_and_type_index});
         }
         _ => {
-            debugPrint!(debug, 3, "unknown tag: {}", tag);
+            debugPrint!(debug, 4, "unknown tag: {}", tag);
             return Err(ClassReadError::Parse);
         }
     }
@@ -385,7 +395,7 @@ fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, Clas
     }
 
     let cp_count = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 3, "cp: {}", cp_count);
+    debugPrint!(true, 4, "cp: {}", cp_count);
 
     if cp_count == 0 {
     return Err(ClassReadError::Parse);
@@ -402,7 +412,7 @@ fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, Clas
     }
 
     ret.access_flags = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 3, "access_flags: {}", ret.access_flags);
+    debugPrint!(true, 4, "access_flags: {}", ret.access_flags);
     ret.this_class_index = try!(reader.read_u16::<BigEndian>());
     return Ok((reader, ret));
 }
@@ -414,32 +424,32 @@ pub fn get_classname(filename: &Path) -> Result<String, ClassReadError> {
 }
 
 pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
-    debugPrint!(true, 2, "Reading file {}", filename.display());
+    debugPrint!(true, 4, "Reading file {}", filename.display());
     let (mut reader, mut ret) = try!(read_up_to_my_class_details(filename));
 
     ret.super_class_index = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 2, "class_indexes: {} {}", ret.this_class_index, ret.super_class_index);
+    debugPrint!(true, 4, "class_indexes: {} {}", ret.this_class_index, ret.super_class_index);
 
     let interfaces_count = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 2, "Interface count: {}", interfaces_count);
+    debugPrint!(true, 4, "Interface count: {}", interfaces_count);
     for _ in 0..interfaces_count {
         ret.interfaces.push(try!(reader.read_u16::<BigEndian>()));
     }
 
     let fields_count = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 2, "Fields count: {}", fields_count);
+    debugPrint!(true, 4, "Fields count: {}", fields_count);
     for _ in 0..fields_count {
         ret.fields.push(try!(read_field(&ret.constant_pool, &mut reader)));
     }
 
     let methods_count = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 2, "Methods count: {}", methods_count);
+    debugPrint!(true, 4, "Methods count: {}", methods_count);
     for _ in 0..methods_count {
         ret.methods.push(try!(read_field(&ret.constant_pool, &mut reader)));
     }
 
     let attributes_count = try!(reader.read_u16::<BigEndian>());
-    debugPrint!(true, 2, "Attributes count: {}", attributes_count);
+    debugPrint!(true, 4, "Attributes count: {}", attributes_count);
     for _ in 0..attributes_count {
         let attribute = try!(read_attribute(&ret.constant_pool, &mut reader));
         match attribute {
