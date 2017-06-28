@@ -2,6 +2,7 @@ extern crate byteorder;
 #[macro_use]
 use reader::class::*;
 use std;
+use std::fmt;
 use std::io;
 use std::io::Cursor;
 use std::collections::{HashMap, HashSet};
@@ -47,6 +48,18 @@ enum Variable {
     InterfaceReference(u32,  Rc<Object>),
     UnresolvedReference(u32,  String),
 }
+impl fmt::Display for Variable {
+     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+         match self {
+             &Variable::Reference(ref array_size, ref class, ref maybe_ref) => {
+                 write!(f, "Reference ({} {} {})", array_size, class.name, maybe_ref.is_some())
+             },
+             _ => {
+                 write!(f, "{:?}", self)
+             }
+         }
+     }
+ }
 
 #[derive(Clone, Debug)]
 struct Frame {
@@ -258,8 +271,9 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
             },
             42...45 => {
                 let index = op_code - 42;
-                debugPrint!(true, 2, "Aload_{}", index);
-                runtime.current_frame.operand_stack.push(runtime.current_frame.local_variables[index as usize].clone());
+                let loaded = runtime.current_frame.local_variables[index as usize].clone();
+                debugPrint!(true, 2, "ALOAD_{} {}", index, loaded);
+                runtime.current_frame.operand_stack.push(loaded);
             }
             177 => { // return
                 debugPrint!(true, 2, "Return");
