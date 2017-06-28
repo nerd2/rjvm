@@ -48,12 +48,23 @@ enum Variable {
     UnresolvedReference(u32,  String),
 }
 
-struct Runtime {
-    class_paths: Vec<String>,
+#[derive(Clone, Debug)]
+struct Frame {
     constant_pool: HashMap<u16, ConstantPoolItem>,
+    local_variables: Vec<Variable>,
     operand_stack: Vec<Variable>,
+}
+
+struct Runtime {
+    previous_frames: Vec<Frame>,
+    current_frame: Frame,
+    class_paths: Vec<String>,
     classes: HashMap<String, Rc<Class>>,
-    unresolved_classes: HashSet<String>,
+}
+
+fn last_mut(v : &mut Vec<Frame>) -> &mut Frame {
+    let len = v.len();
+    return &mut v[len-1];
 }
 
 impl From<io::Error> for RunnerError {
@@ -171,7 +182,7 @@ fn load_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Re
     }
 }
 
-fn construct_object(classes: &mut HashMap<String, Rc<Class>>, class: &Rc<Class>) -> Result<Rc<Object>, RunnerError> {
+fn construct_object(classes: &HashMap<String, Rc<Class>>, class: &Rc<Class>) -> Result<Rc<Object>, RunnerError> {
     let mut obj = Object { typeRef: class.clone(), members: HashMap::new()};
 
     debugPrint!(true, 2, "Constructing object {}", class.name);
@@ -198,7 +209,28 @@ fn construct_object(classes: &mut HashMap<String, Rc<Class>>, class: &Rc<Class>)
     return Ok(Rc::new(obj));
 }
 
-fn run_method(runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
+fn get_class_method_code(class: &ClassResult, method_name: &str, descriptor: &str) -> Result<Code, RunnerError> {
+    let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid);
+
+    for method in &class.methods {
+        if try!(get_cp_str(&class.constant_pool, method.name_index)) == method_name &&
+            try!(get_cp_str(&class.constant_pool, method.descriptor_index)) == descriptor {
+            method_res = Ok(method);
+            break;
+        }
+    }
+
+    let method = try!(method_res);
+    let code = try!(method.attributes.iter().filter_map(|x|
+        match x {
+            &AttributeItem::Code(ref c) => Some(c),
+            _ => None
+        })
+        .nth(0).ok_or(RunnerError::ClassInvalid));
+    return Ok(code.clone());
+}
+
+fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
         return Err(RunnerError::InvalidPc);
     }
@@ -210,7 +242,7 @@ fn run_method(runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerE
             18 => { // LDC
                 let index = try!(buf.read_u8());
                 debugPrint!(true, 2, "LDC {}", index);
-                let maybe_cp_entry = runtime.constant_pool.get(&(index as u16));
+                let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16));
                 if maybe_cp_entry.is_none() {
                     debugPrint!(true, 1, "LDC failed at index {}", index);
                     return Err(RunnerError::ClassInvalid);
@@ -218,11 +250,16 @@ fn run_method(runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerE
                     match *maybe_cp_entry.unwrap() {
                         ConstantPoolItem::CONSTANT_String { index } => {
                             let string_class = try!(load_class(&mut runtime.classes, "java/lang/String", &runtime.class_paths));
-                            runtime.operand_stack.push(Variable::Reference(0, string_class.clone(), Some(try!(construct_object(&mut runtime.classes, &string_class)))));
+                            runtime.current_frame.operand_stack.push(Variable::Reference(0, string_class.clone(), Some(try!(construct_object(&mut runtime.classes, &string_class)))));
                         }
                         _ => return Err(RunnerError::UnknownOpCode(op_code))
                     }
                 }
+            },
+            42...45 => {
+                let index = op_code - 42;
+                debugPrint!(true, 2, "Aload_{}", index);
+                runtime.current_frame.operand_stack.push(runtime.current_frame.local_variables[index as usize].clone());
             }
             177 => { // return
                 debugPrint!(true, 2, "Return");
@@ -230,20 +267,53 @@ fn run_method(runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerE
             }
             178 => { // getstatic
                 let index = try!(buf.read_u16::<BigEndian>());
-                let (class_name, field_name, typ) = try!(load_field(&runtime.constant_pool, index));
+                let (class_name, field_name, typ) = try!(load_field(&runtime.current_frame.constant_pool, index));
                 debugPrint!(true, 2, "GETSTATIC {} {} {}", class_name, field_name, typ);
                 let class_result = try!(load_class(&mut runtime.classes, class_name, &runtime.class_paths));
                 let maybe_static_variable = class_result.statics.get(field_name);
                 if maybe_static_variable.is_none() {
                     return Err(RunnerError::ClassNotLoaded(String::from(class_name)));
                 }
-                runtime.operand_stack.push(maybe_static_variable.unwrap().clone());
+                runtime.current_frame.operand_stack.push(maybe_static_variable.unwrap().clone());
             }
             182 => {  // invokevirtual
-                let index = try!(buf.read_u16::<BigEndian>());
-                let (class_name, name, typ) = try!(load_method(&runtime.constant_pool, index));
-                debugPrint!(true, 2, "INVOKEVIRTUAL {} {} {}", class_name, name, typ);
-                let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, typ));
+                let mut code : Option<Code> = None;
+                let mut new_frame : Option<Frame> = None;
+                {
+                    let index = try!(buf.read_u16::<BigEndian>());
+                    let (class_name, method_name, descriptor) = try!(load_method(&runtime.current_frame.constant_pool, index));
+                    debugPrint!(true, 2, "INVOKEVIRTUAL {} {} {}", class_name, method_name, descriptor);
+                    let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor));
+                    let current_op_stack_size = runtime.current_frame.operand_stack.len();
+                    let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - 1);
+                    let obj = new_local_variables[0].clone();
+                    match obj {
+                        Variable::Reference(array_depth, class, maybe_ref) => {
+                            new_frame = Some(Frame {
+                                constant_pool: class.cr.constant_pool.clone(),
+                                operand_stack: Vec::new(),
+                                local_variables: new_local_variables});
+
+                            if class.name != class_name {
+                                debugPrint!(true, 1, "Expected object on stack with class name {} but got {}", class_name, class.name);
+                                return Err(RunnerError::ClassInvalid);
+                            } else if maybe_ref.is_none() {
+                                debugPrint!(true, 1, "Expected object on stack with class name {} but got null", class_name);
+                                return Err(RunnerError::ClassInvalid);
+                            }
+
+                            code = Some(try!(get_class_method_code(&class.cr, method_name, descriptor)));
+                        },
+                        _ => {
+                            debugPrint!(true, 1, "Expected object to invokevirtual on, but got something else {:?}", obj);
+                            return Err(RunnerError::ClassInvalid);
+                        }
+                    }
+                }
+
+                runtime.previous_frames.push(runtime.current_frame.clone());
+                runtime.current_frame = new_frame.unwrap();
+                try!(run_method(&mut runtime, &code.unwrap(), 0));
             }
             _ => return Err(RunnerError::UnknownOpCode(op_code))
         }
@@ -312,14 +382,40 @@ fn load_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths:
 
 fn bootstrap_class_and_dependencies(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_result: &ClassResult, class_paths: &Vec<String>) -> Result<Rc<Class>, RunnerError>  {
     let mut unresolved_classes : HashSet<String> = HashSet::new();
-    let class_obj = try!(bootstrap_class(classes, &mut unresolved_classes, name, class_result));
+    let mut classes_to_process : Vec<Rc<Class>> = Vec::new();
+    classes_to_process.push(try!(bootstrap_class(classes, &mut unresolved_classes, name, class_result)));
     while unresolved_classes.len() > 0 {
         let class_to_resolve = unresolved_classes.iter().next().unwrap().clone();
         unresolved_classes.remove(&class_to_resolve);
         let class_result_to_resolve = try!(find_class(&class_to_resolve, class_paths));
-        try!(bootstrap_class(classes, &mut unresolved_classes, &class_to_resolve, &class_result_to_resolve));
+        classes_to_process.push(try!(bootstrap_class(classes, &mut unresolved_classes, &class_to_resolve, &class_result_to_resolve)));
     }
-    return Ok(class_obj);
+
+    for mut class in classes_to_process {
+        let name = class.name.clone();
+        let class_mut = Rc::make_mut(&mut class);
+        for v in class_mut.statics.values_mut() {
+            let mut replace : Option<Variable> = None;
+            match v {
+                &mut Variable::UnresolvedReference(array_depth, ref type_string) => {
+                    if classes.contains_key(type_string.as_str()) {
+                        let subclass = classes.get(type_string.as_str()).unwrap().clone();
+                        let obj = try!(construct_object(classes, &subclass));
+                        replace = Some(Variable::Reference(array_depth, subclass, Some(obj)));
+                    } else {
+                        debugPrint!(true, 1, "Couldn't resolve unresolved {}", type_string);
+                        return Err(RunnerError::ClassInvalid);
+                    }
+                },
+                _ => {}
+            }
+            if replace.is_some() {
+                *v = replace.unwrap();
+            }
+        }
+        classes.insert(name, Rc::new(class_mut.clone()));
+    }
+    return Ok(classes.get(&String::from(name)).unwrap().clone());
 }
 
 fn bootstrap_class(classes: &mut HashMap<String, Rc<Class>>, unresolved_classes: &mut HashSet<String>, class_name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError> {
@@ -408,11 +504,17 @@ fn parse_function_type_string(classes: &HashMap<String, Rc<Class>>, string: &str
         debugPrint!(debug, 3, "Found parameter {}", single_type_string);
         parameters.push(try!(parse_single_type_string(classes, single_type_string.as_str())));
     }
+    iter.next();
 
-    return Ok((parameters, None));
+    let return_type_string : String = iter.collect();
+    if return_type_string == "V" {
+        return Ok((parameters, None));
+    } else {
+        return Ok((parameters, Some(try!(parse_single_type_string(classes, return_type_string.as_str())))));
+    }
 }
 
-fn construct_field(classes: &mut HashMap<String, Rc<Class>>, field: &FieldItem, constant_pool: &HashMap<u16, ConstantPoolItem>) -> Result<(Variable, Option<String>), RunnerError> {
+fn construct_field(classes: &HashMap<String, Rc<Class>>, field: &FieldItem, constant_pool: &HashMap<u16, ConstantPoolItem>) -> Result<(Variable, Option<String>), RunnerError> {
     let name_string = try!(get_cp_str(&constant_pool, field.name_index));
     let descriptor_string = try!(get_cp_str(&constant_pool, field.descriptor_index));
 
@@ -432,29 +534,19 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
 
     let mut runtime = Runtime {
         class_paths: class_paths.clone(),
-        constant_pool: class.constant_pool.clone(),
-        operand_stack: Vec::new(),
-        classes: HashMap::new(),
-        unresolved_classes: HashSet::new(),
+        previous_frames: Vec::new(),
+        current_frame: Frame {
+            constant_pool: class.constant_pool.clone(),
+            operand_stack: Vec::new(),
+            local_variables: Vec::new()},
+        classes: HashMap::new()
     };
 
     bootstrap_class_and_dependencies(&mut runtime.classes, String::new().as_str(), class, class_paths);
 
-    for method in &class.methods {
-        if try!(get_cp_str(&runtime.constant_pool, method.name_index)) == "main" &&
-            try!(get_cp_str(&runtime.constant_pool, method.descriptor_index)) == "([Ljava/lang/String;)V" {
-            main_method_res = Ok(method);
-            break;
-        }
-    }
+    let main_code = try!(get_class_method_code(class, &"main", &"([Ljava/lang/String;)V"));
 
-    let main_method = try!(main_method_res);
-
-    let main_code = try!(main_method.attributes.iter().filter_map(|x|
-            match x { &AttributeItem::Code(ref c) => Some(c), _ => None })
-        .nth(0).ok_or(RunnerError::ClassInvalid));
-
-    try!(run_method(&mut runtime, main_code, 0));
+    try!(run_method(&mut runtime, &main_code, 0));
 
     return Ok(());
 }
