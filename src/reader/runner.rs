@@ -24,8 +24,14 @@ pub enum RunnerError {
 #[derive(Clone, Debug)]
 struct Class {
     name: String,
+    initialised: bool,
     cr: ClassResult,
     statics: HashMap<String, Variable>
+}
+impl Class {
+  pub fn new(name: &String, cr: &ClassResult) -> Class {
+      return Class { name: name.clone(), initialised: false, cr: cr.clone(), statics: HashMap::new()};
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -41,24 +47,24 @@ impl fmt::Display for Object {
 
 #[derive(Clone, Debug)]
 enum Variable {
-    Byte(u32,  u8),
-    Char(u32,  char),
-    Double(u32,  f64),
-    Float(u32,  f32),
-    Int(u32,  i32),
-    Long(u32,  i64),
-    Short(u32,  i16),
-    Boolean(u32,  bool),
-    Reference(u32,  Rc<Class>, Option<Rc<Object>>),
-    ArrayReference(u32,  Vec<Rc<Object>>),
-    InterfaceReference(u32,  Rc<Object>),
-    UnresolvedReference(u32,  String),
+    Byte(u8),
+    Char(char),
+    Double(f64),
+    Float(f32),
+    Int(i32),
+    Long(i64),
+    Short(i16),
+    Boolean(bool),
+    Reference(Rc<Class>, Option<Rc<Object>>),
+    ArrayReference(Rc<Variable>, Option<Rc<Vec<Variable>>>), // First argument is dummy for array type
+    InterfaceReference(Rc<Object>),
+    UnresolvedReference(String),
 }
 impl fmt::Display for Variable {
      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
          match self {
-             &Variable::Reference(ref array_size, ref class, ref maybe_ref) => {
-                 write!(f, "Reference ({} {} {})", array_size, class.name, maybe_ref.is_some())
+             &Variable::Reference(ref class, ref maybe_ref) => {
+                 write!(f, "Reference ({} {})", class.name, maybe_ref.is_some())
              },
              _ => {
                  write!(f, "{:?}", self)
@@ -201,31 +207,31 @@ fn load_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Re
     }
 }
 
-fn construct_object(classes: &HashMap<String, Rc<Class>>, class: &Rc<Class>) -> Result<Rc<Object>, RunnerError> {
-    let mut obj = Object { typeRef: class.clone(), members: HashMap::new()};
+fn initialise_variable(classes: &HashMap<String, Rc<Class>>, descriptor_string: &str) -> Result<Variable, RunnerError> {
+    let mut variable = try!(parse_single_type_string(classes, descriptor_string));
+    return Ok(variable);
+}
 
-    debugPrint!(true, 2, "Constructing object {}", class.name);
+fn construct_object(classes: &HashMap<String, Rc<Class>>, name: &str, arguments: &Vec<Variable>) -> Result<Variable, RunnerError> {
+    debugPrint!(true, 3, "Constructing object {}", name);
 
+    let class = try!(classes.get(name).ok_or(RunnerError::ClassInvalid));
+    let mut members : HashMap<String, Variable> = HashMap::new();
     for field in &class.cr.fields {
         if field.access_flags & ACC_STATIC != 0 {
-            // Static
             continue;
         }
 
         let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-        let (variable, maybe_unres) = try!(construct_field(classes, &field, &class.cr.constant_pool));
+        let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
 
-        if maybe_unres.is_some() {
-            println!("Constructed a nonstatic object field unresolved class {}", maybe_unres.unwrap());
-            return Err(RunnerError::ClassInvalid);
-        }
+        let var = try!(initialise_variable(classes, descriptor_string));
 
-        obj.members.insert(String::from(name_string), variable);
+        members.insert(String::from(name_string), var);
     }
-
-    // TODO: Constructor
-
-    return Ok(Rc::new(obj));
+    // TODO: constructor
+    let obj = Object {typeRef: class.clone(), members: members};
+    return Ok(Variable::Reference(class.clone(), Some(Rc::new(obj))));
 }
 
 fn get_class_method_code(class: &ClassResult, method_name: &str, descriptor: &str) -> Result<Code, RunnerError> {
@@ -251,13 +257,21 @@ fn get_class_method_code(class: &ClassResult, method_name: &str, descriptor: &st
 
 fn get_obj_instance_from_variable(var: &Variable) -> Result<Option<Rc<Object>>, RunnerError> {
     match var {
-        &Variable::Reference(ref array_size, ref class, ref objref) => {
+        &Variable::Reference(ref class, ref objref) => {
             return Ok(objref.clone());
         },
         _ => {
             return Err(RunnerError::ClassInvalid);
         }
     }
+}
+
+fn construct_char_array(s: &str) -> Variable {
+    let mut v : Vec<Variable> = Vec::new();
+    for c in s.chars() {
+        v.push(Variable::Char(c));
+    }
+    return Variable::ArrayReference(Rc::new(Variable::Char('\0')), Some(Rc::new(v)));
 }
 
 fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
@@ -280,8 +294,10 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
                 } else {
                     match *maybe_cp_entry.unwrap() {
                         ConstantPoolItem::CONSTANT_String { index } => {
-                            let string_class = try!(load_class(&mut runtime.classes, "java/lang/String", &runtime.class_paths));
-                            runtime.current_frame.operand_stack.push(Variable::Reference(0, string_class.clone(), Some(try!(construct_object(&mut runtime.classes, &string_class)))));
+                            let string_value = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                            let arguments = vec!(construct_char_array(string_value));
+                            let var = try!(construct_object(&mut runtime.classes, &"java/lang/String", &arguments));
+                            runtime.current_frame.operand_stack.push(var);
                         }
                         _ => return Err(RunnerError::UnknownOpCode(op_code))
                     }
@@ -353,7 +369,7 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
                     let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - 1);
                     let obj = new_local_variables[0].clone();
                     match obj {
-                        Variable::Reference(array_depth, class, maybe_ref) => {
+                        Variable::Reference(class, maybe_ref) => {
                             new_frame = Some(Frame {
                                 constant_pool: class.cr.constant_pool.clone(),
                                 operand_stack: Vec::new(),
@@ -465,61 +481,75 @@ fn load_class(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths:
 fn bootstrap_class_and_dependencies(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_result: &ClassResult, class_paths: &Vec<String>) -> Result<Rc<Class>, RunnerError>  {
     let mut unresolved_classes : HashSet<String> = HashSet::new();
     let mut classes_to_process : Vec<Rc<Class>> = Vec::new();
-    classes_to_process.push(try!(bootstrap_class(classes, &mut unresolved_classes, name, class_result)));
+
+    let new_class = Rc::new(Class::new(&String::from(name), class_result));
+    classes.insert(String::from(name), new_class.clone());
+    classes_to_process.push(new_class);
+    debugPrint!(true, 2, "Finding unresolved dependencies in class {}", name);
+    find_unresolved_class_dependencies(classes, &mut unresolved_classes, class_result);
+
     while unresolved_classes.len() > 0 {
         let class_to_resolve = unresolved_classes.iter().next().unwrap().clone();
+        debugPrint!(true, 2, "Finding unresolved dependencies in class {}", class_to_resolve);
         unresolved_classes.remove(&class_to_resolve);
         let class_result_to_resolve = try!(find_class(&class_to_resolve, class_paths));
-        classes_to_process.push(try!(bootstrap_class(classes, &mut unresolved_classes, &class_to_resolve, &class_result_to_resolve)));
+        let new_class = Rc::new(Class::new(&class_to_resolve, &class_result_to_resolve));
+        classes.insert(class_to_resolve, new_class.clone());
+        classes_to_process.push(new_class);
+        find_unresolved_class_dependencies(classes, &mut unresolved_classes, &class_result_to_resolve);
     }
 
     for mut class in classes_to_process {
-        let name = class.name.clone();
-        let class_mut = Rc::make_mut(&mut class);
-        for v in class_mut.statics.values_mut() {
-            let mut replace : Option<Variable> = None;
-            match v {
-                &mut Variable::UnresolvedReference(array_depth, ref type_string) => {
-                    if classes.contains_key(type_string.as_str()) {
-                        let subclass = classes.get(type_string.as_str()).unwrap().clone();
-                        let obj = try!(construct_object(classes, &subclass));
-                        replace = Some(Variable::Reference(array_depth, subclass, Some(obj)));
-                    } else {
-                        debugPrint!(true, 1, "Couldn't resolve unresolved {}", type_string);
-                        return Err(RunnerError::ClassInvalid);
-                    }
-                },
-                _ => {}
-            }
-            if replace.is_some() {
-                *v = replace.unwrap();
-            }
-        }
-        classes.insert(name, Rc::new(class_mut.clone()));
+        initialise_class(classes, &class);
     }
     return Ok(classes.get(&String::from(name)).unwrap().clone());
 }
 
-fn bootstrap_class(classes: &mut HashMap<String, Rc<Class>>, unresolved_classes: &mut HashSet<String>, class_name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError> {
-    debugPrint!(true, 2, "Bootstrapping class {}", class_name);
-    let mut class = Class { name: String::from(class_name), cr: class_result.clone(), statics: HashMap::new() };
-    for field in &class.cr.fields {
-        let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-        let (variable, maybe_unres) = try!(construct_field(classes, &field, &class.cr.constant_pool));
+fn find_unresolved_class_dependencies(classes: &mut HashMap<String, Rc<Class>>, unresolved_classes: &mut HashSet<String>, class_result: &ClassResult) -> Result<(), RunnerError> {
+    let debug = false;
+    for field in &class_result.fields {
+        let name_string = try!(get_cp_str(&class_result.constant_pool, field.name_index));
+        let descriptor_string = try!(get_cp_str(&class_result.constant_pool, field.descriptor_index));
 
-        if maybe_unres.is_some() {
-            unresolved_classes.insert(maybe_unres.unwrap());
-        }
+        debugPrint!(debug, 3, "Checking field {} {}", name_string, descriptor_string);
 
-        if field.access_flags & ACC_STATIC != 0 {
-            class.statics.insert(String::from(name_string), variable);
+        let variable = try!(parse_single_type_string(classes, descriptor_string));
+        match variable {
+            Variable::UnresolvedReference(ref type_string) => {
+                debugPrint!(debug, 3, "Class {} is unresolved", type_string);
+                unresolved_classes.insert(type_string.clone());
+            },
+            _ => {}
         }
     }
-    let rc = Rc::new(class);
-    debugPrint!(true, 2, "Bootstrap complete {}", class_name);
-    classes.insert(String::from(class_name), rc.clone());
-    unresolved_classes.remove(class_name);
-    return Ok(rc);
+    return Ok(());
+}
+
+fn initialise_class(classes: &mut HashMap<String, Rc<Class>>, class: &Rc<Class>) -> Result<(), RunnerError> {
+    debugPrint!(true, 2, "Initialising class {}", class.name);
+    if class.initialised {
+        return Ok(());
+    }
+
+    let class_name = class.name.clone();
+    let mut class_mut = (**class).clone();
+    for field in &class_mut.cr.fields {
+        if field.access_flags & ACC_STATIC == 0 {
+            continue;
+        }
+
+        let name_string = try!(get_cp_str(&class_mut.cr.constant_pool, field.name_index));
+        let descriptor_string = try!(get_cp_str(&class_mut.cr.constant_pool, field.descriptor_index));
+
+        debugPrint!(true, 3, "Constructing class static member {} {}", name_string, descriptor_string);
+
+        let var = try!(initialise_variable(classes, descriptor_string));
+
+        class_mut.statics.insert(String::from(name_string), var);
+    }
+    class_mut.initialised = true;
+    classes.insert(String::from(class_name), Rc::new(class_mut));
+    return Ok(());
 }
 
 fn parse_single_type_string(classes: &HashMap<String, Rc<Class>>, string: &str) -> Result<Variable, RunnerError> {
@@ -543,25 +573,25 @@ fn parse_single_type_string(classes: &HashMap<String, Rc<Class>>, string: &str) 
         return Err(RunnerError::ClassInvalid);
     }
 
-    let mut variable = Variable::Int(array_depth, 0);
+    let mut variable = Variable::Int(0);
     match maybe_type_specifier.unwrap() {
         'L' => {
             let type_string : String = iter.take_while(|x| *x != ';').collect();
             if classes.contains_key( type_string.as_str()) {
                 let class = classes.get(type_string.as_str()).unwrap().clone();
-                variable = Variable::Reference(array_depth, class.clone(), None);
+                variable = Variable::Reference(class.clone(), None);
             } else {
-                variable = Variable::UnresolvedReference(array_depth, type_string.clone());
+                variable = Variable::UnresolvedReference(type_string.clone());
             }
         }
-        'B' => variable = Variable::Byte(array_depth, 0),
-        'C' => variable = Variable::Char(array_depth, '\0'),
-        'D' => variable = Variable::Double(array_depth, 0.0),
-        'F' => variable = Variable::Float(array_depth, 0.0),
-        'I' => variable = Variable::Int(array_depth, 0),
-        'J' => variable = Variable::Long(array_depth, 0),
-        'S' => variable = Variable::Short(array_depth, 0),
-        'Z' => variable = Variable::Boolean(array_depth, false),
+        'B' => variable = Variable::Byte(0),
+        'C' => variable = Variable::Char('\0'),
+        'D' => variable = Variable::Double(0.0),
+        'F' => variable = Variable::Float(0.0),
+        'I' => variable = Variable::Int(0),
+        'J' => variable = Variable::Long(0),
+        'S' => variable = Variable::Short(0),
+        'Z' => variable = Variable::Boolean(false),
         _ => {
             debugPrint!(true, 1, "Type string {} unrecognised", string);
             return Err(RunnerError::ClassInvalid);
@@ -604,7 +634,7 @@ fn construct_field(classes: &HashMap<String, Rc<Class>>, field: &FieldItem, cons
 
     let variable = try!(parse_single_type_string(classes, descriptor_string));
     let unres = match &variable {
-        &Variable::UnresolvedReference(n, ref str) => Some(str.clone()),
+        &Variable::UnresolvedReference(ref str) => Some(str.clone()),
         _ => None
       };
     return Ok((variable, unres));
