@@ -17,7 +17,8 @@ pub enum RunnerError {
     ClassInvalid,
     InvalidPc,
     UnknownOpCode(u8),
-    ClassNotLoaded(String)
+    ClassNotLoaded(String),
+    NullPointerException,
 }
 
 #[derive(Clone, Debug)]
@@ -31,6 +32,11 @@ struct Class {
 struct Object {
     typeRef: Rc<Class>,
     members: HashMap<String, Variable>,
+}
+impl fmt::Display for Object {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Object type:{}", self.typeRef.name)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -243,6 +249,17 @@ fn get_class_method_code(class: &ClassResult, method_name: &str, descriptor: &st
     return Ok(code.clone());
 }
 
+fn get_obj_instance_from_variable(var: &Variable) -> Result<Option<Rc<Object>>, RunnerError> {
+    match var {
+        &Variable::Reference(ref array_size, ref class, ref objref) => {
+            return Ok(objref.clone());
+        },
+        _ => {
+            return Err(RunnerError::ClassInvalid);
+        }
+    }
+}
+
 fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
         return Err(RunnerError::InvalidPc);
@@ -250,6 +267,7 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
     let mut buf = Cursor::new(&code.code);
 
     loop {
+        let current_position = buf.position();
         let op_code = try!(buf.read_u8());
         match op_code {
             18 => { // LDC
@@ -275,6 +293,26 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
                 debugPrint!(true, 2, "ALOAD_{} {}", index, loaded);
                 runtime.current_frame.operand_stack.push(loaded);
             }
+            75...78 => {
+                let index = (op_code - 75) as usize;
+                let popped = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "ASTORE_{} {}", index, popped);
+                let local_len = runtime.current_frame.local_variables.len();
+                if local_len > index {
+                    runtime.current_frame.local_variables[index as usize] = popped;
+                } else if local_len == index {
+                    runtime.current_frame.local_variables.push(popped);
+                } else {
+                    debugPrint!(true, 1, "Asked to store into local variables at index {} when current size is only {}", index, local_len);
+                    return Err(RunnerError::InvalidPc);
+                }
+            }
+            89 => {
+                let stack_len = runtime.current_frame.operand_stack.len();
+                let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
+                debugPrint!(true, 2, "DUP {}", peek);
+                runtime.current_frame.operand_stack.push(peek);
+            }
             177 => { // return
                 debugPrint!(true, 2, "Return");
                 return Ok(());
@@ -290,7 +328,7 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
                 }
                 runtime.current_frame.operand_stack.push(maybe_static_variable.unwrap().clone());
             }
-            182 => {  // invokevirtual
+            182 | 183 => {  // invokevirtual, invokespecial
                 let mut code : Option<Code> = None;
                 let mut new_frame : Option<Frame> = None;
                 {
@@ -328,6 +366,23 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
                 runtime.previous_frames.push(runtime.current_frame.clone());
                 runtime.current_frame = new_frame.unwrap();
                 try!(run_method(&mut runtime, &code.unwrap(), 0));
+            },
+            194 => {
+                let var = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "MONITORENTER {}", var);
+                let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
+                // TODO: Implement monitor
+                debugPrint!(true, 1, "WARNING: MonitorEnter not implemented");
+            },
+            199 => {
+                let branch_offset = try!(buf.read_u16::<BigEndian>()) as u64;
+                let var = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "IFNONNULL {} {}", var, branch_offset);
+                let maybe_obj = try!(get_obj_instance_from_variable(&var));
+                if maybe_obj.is_some() {
+                    debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, current_position + branch_offset);
+                    buf.set_position(current_position + branch_offset);
+                }
             }
             _ => return Err(RunnerError::UnknownOpCode(op_code))
         }
