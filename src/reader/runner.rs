@@ -328,6 +328,19 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
                 }
                 runtime.current_frame.operand_stack.push(maybe_static_variable.unwrap().clone());
             }
+            180 => {
+                let field_index = try!(buf.read_u16::<BigEndian>());
+                let (class_name, field_name, typ) = try!(load_field(&runtime.current_frame.constant_pool, field_index));
+                let var = runtime.current_frame.operand_stack.pop().unwrap();
+                let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
+                debugPrint!(true, 2, "GETFIELD {} {} {} {}", class_name, field_name, typ, obj);
+                if obj.typeRef.name != class_name {
+                    debugPrint!(true, 1, "Getfield called when object on stack had incorrect type");
+                    return Err(RunnerError::ClassInvalid);
+                }
+                let member = try!(obj.members.get(field_name).ok_or(RunnerError::ClassInvalid));
+                runtime.current_frame.operand_stack.push(member.clone());
+            }
             182 | 183 => {  // invokevirtual, invokespecial
                 let mut code : Option<Code> = None;
                 let mut new_frame : Option<Frame> = None;
