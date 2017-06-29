@@ -28,7 +28,7 @@ pub enum ClassReadError {
     UnsupportedVersion(f32)
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ConstantPoolItem {
     CONSTANT_Utf8(String),
     CONSTANT_Class{index: u16},
@@ -46,7 +46,7 @@ pub enum ConstantPoolItem {
     CONSTANT_InvokeDynamic{bootstrap_method_attr_index: u16, name_and_type_index: u16},
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExceptionItem {
     start_pc: u16,
     end_pc: u16,
@@ -54,7 +54,7 @@ pub struct ExceptionItem {
     catch_type: u16
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Code {
     pub max_stack: u16,
     pub max_locals: u16,
@@ -63,7 +63,7 @@ pub struct Code {
     pub attributes: Vec<AttributeItem>
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AttributeItem {
     ConstantValue{index: u16},
     Code(Code),
@@ -82,7 +82,7 @@ pub const ACC_TRANSIENT: u16 = 0x0080;
 pub const ACC_SYNTHETIC: u16 = 0x1000;
 pub const ACC_ENUM: u16 = 0x4000;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct FieldItem {
     pub access_flags: u16,
     pub name_index: u16,
@@ -96,7 +96,7 @@ impl FieldItem {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ClassResult {
     pub constant_pool: HashMap<u16, ConstantPoolItem>,
     pub access_flags: u16,

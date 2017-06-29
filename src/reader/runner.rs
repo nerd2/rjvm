@@ -21,8 +21,8 @@ pub enum RunnerError {
     NullPointerException,
 }
 
-#[derive(Clone, Debug)]
-struct Class {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Class {
     name: String,
     initialised: bool,
     cr: ClassResult,
@@ -34,8 +34,8 @@ impl Class {
   }
 }
 
-#[derive(Clone, Debug)]
-struct Object {
+#[derive(Clone, Debug, PartialEq)]
+pub struct Object {
     typeRef: Rc<Class>,
     members: HashMap<String, Variable>,
 }
@@ -45,8 +45,8 @@ impl fmt::Display for Object {
     }
 }
 
-#[derive(Clone, Debug)]
-enum Variable {
+#[derive(Clone, Debug, PartialEq)]
+pub enum Variable {
     Byte(u8),
     Char(char),
     Double(f64),
@@ -234,18 +234,22 @@ fn construct_object(classes: &HashMap<String, Rc<Class>>, name: &str, arguments:
     return Ok(Variable::Reference(class.clone(), Some(Rc::new(obj))));
 }
 
-fn get_class_method_code(class: &ClassResult, method_name: &str, descriptor: &str) -> Result<Code, RunnerError> {
+fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
     let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid);
 
     for method in &class.methods {
-        if try!(get_cp_str(&class.constant_pool, method.name_index)) == method_name &&
-            try!(get_cp_str(&class.constant_pool, method.descriptor_index)) == descriptor {
+        let method_name = try!(get_cp_str(&class.constant_pool, method.name_index));
+        let descriptor = try!(get_cp_str(&class.constant_pool, method.descriptor_index));
+        debugPrint!(true, 3, "Checking method {} {}", method_name, descriptor);
+        if method_name == target_method_name &&
+            descriptor == target_descriptor {
             method_res = Ok(method);
             break;
         }
     }
 
     let method = try!(method_res);
+    debugPrint!(true, 3, "Found method");
     let code = try!(method.attributes.iter().filter_map(|x|
         match x {
             &AttributeItem::Code(ref c) => Some(c),
@@ -274,7 +278,7 @@ fn construct_char_array(s: &str) -> Variable {
     return Variable::ArrayReference(Rc::new(Variable::Char('\0')), Some(Rc::new(v)));
 }
 
-fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
+fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
         return Err(RunnerError::InvalidPc);
     }
@@ -394,7 +398,7 @@ fn run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), Run
 
                 runtime.previous_frames.push(runtime.current_frame.clone());
                 runtime.current_frame = new_frame.unwrap();
-                try!(run_method(&mut runtime, &code.unwrap(), 0));
+                try!(do_run_method(&mut runtime, &code.unwrap(), 0));
             },
             194 => {
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
@@ -502,6 +506,7 @@ fn bootstrap_class_and_dependencies(classes: &mut HashMap<String, Rc<Class>>, na
     for mut class in classes_to_process {
         initialise_class(classes, &class);
     }
+    debugPrint!(true, 2, "Bootstrap totally complete on {}", name);
     return Ok(classes.get(&String::from(name)).unwrap().clone());
 }
 
@@ -550,6 +555,47 @@ fn initialise_class(classes: &mut HashMap<String, Rc<Class>>, class: &Rc<Class>)
     class_mut.initialised = true;
     classes.insert(String::from(class_name), Rc::new(class_mut));
     return Ok(());
+}
+
+fn generate_variable_descriptor(var: &Variable) -> String {
+    let mut ret = String::new();
+    match var {
+        &Variable::Byte(v) => {ret.push('B');},
+        &Variable::Char(v) => {ret.push('C');},
+        &Variable::Double(v) => {ret.push('D');},
+        &Variable::Float(v) => {ret.push('F');},
+        &Variable::Int(v) => {ret.push('I');},
+        &Variable::Long(v) => {ret.push('L');},
+        &Variable::Short(v) => {ret.push('S');},
+        &Variable::Boolean(v) => {ret.push('Z');},
+        &Variable::Reference(ref class, ref obj) => {
+            ret.push('L');
+            ret.push_str(class.name.as_str());
+            ret.push(';');
+        },
+        &Variable::UnresolvedReference(ref class_name) => {
+            ret.push('L');
+            ret.push_str(class_name.as_str());
+            ret.push(';');
+        },
+        _ => {panic!("Type not covered");}
+    }
+    return ret;
+}
+
+fn generate_method_descriptor(args: &Vec<Variable>, return_type: Option<&Variable>) -> String {
+    let mut ret = String::new();
+    ret.push('(');
+    for arg in args {
+        ret.push_str(generate_variable_descriptor(arg).as_str());
+    }
+    ret.push(')');
+    if return_type.is_some() {
+        ret.push_str(generate_variable_descriptor(return_type.unwrap()).as_str());
+    } else {
+        ret.push('V');
+    }
+    return ret;
 }
 
 fn parse_single_type_string(classes: &HashMap<String, Rc<Class>>, string: &str) -> Result<Variable, RunnerError> {
@@ -658,7 +704,31 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
 
     let main_code = try!(get_class_method_code(class, &"main", &"([Ljava/lang/String;)V"));
 
-    try!(run_method(&mut runtime, &main_code, 0));
+    try!(do_run_method(&mut runtime, &main_code, 0));
 
     return Ok(());
+}
+
+pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, arguments: &Vec<Variable>, return_type: Option<&Variable>) -> Result<Variable, RunnerError> {
+    println!("Running method {} with {} arguments", method, arguments.len());
+    let mut runtime = Runtime {
+        class_paths: class_paths.clone(),
+        previous_frames: Vec::new(),
+        current_frame: Frame {
+            constant_pool: class.constant_pool.clone(),
+            operand_stack: Vec::new(),
+            local_variables: arguments.clone()},
+        classes: HashMap::new()
+    };
+
+    bootstrap_class_and_dependencies(&mut runtime.classes, String::new().as_str(), class, class_paths);
+
+    let method_descriptor = generate_method_descriptor(&runtime.current_frame.local_variables, return_type);
+    debugPrint!(true, 1, "Finding method {} with descriptor {}", method, method_descriptor);
+    let code = try!(get_class_method_code(class, method, method_descriptor.as_str()));
+
+    println!("Running method");
+    try!(do_run_method(&mut runtime, &code, 0));
+
+    return Ok(runtime.current_frame.local_variables[0].clone());
 }

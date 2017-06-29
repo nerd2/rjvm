@@ -3,13 +3,13 @@ extern crate glob;
 
 #[cfg(test)]
 mod tests {
-    use rjvm::run;
+    use rjvm::run_method;
+    use rjvm::reader::runner::Variable;
     use glob::glob;
+    use std::path::Path;
 
     #[test]
-    fn expectation_checker() {
-        for file in glob("tests/*.class").unwrap().filter_map(Result::ok) {
-            run(&file);
-        }
+    fn maths() {
+        assert_eq!(run_method(Path::new("tests/maths.class"), "add", &vec!(Variable::Int(1), Variable::Int(2)), Some(&Variable::Int(0))), Variable::Int(3));
     }
 }
