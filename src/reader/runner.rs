@@ -60,6 +60,18 @@ pub enum Variable {
     InterfaceReference(Rc<Object>),
     UnresolvedReference(String),
 }
+impl Variable {
+    pub fn to_int(&self) -> i32 {
+        match self {
+            &Variable::Int(ref x) => {
+                return *x;
+            },
+            _ => {
+                panic!("Couldn't convert to int");
+            }
+        }
+    }
+}
 impl fmt::Display for Variable {
      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
          match self {
@@ -307,6 +319,12 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                     }
                 }
             },
+            26...29 => {
+                let index = op_code - 26;
+                let loaded = runtime.current_frame.local_variables[index as usize].clone();
+                debugPrint!(true, 2, "ILOAD_{} {}", index, loaded);
+                runtime.current_frame.operand_stack.push(loaded);
+            }
             42...45 => {
                 let index = op_code - 42;
                 let loaded = runtime.current_frame.local_variables[index as usize].clone();
@@ -332,6 +350,19 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
                 debugPrint!(true, 2, "DUP {}", peek);
                 runtime.current_frame.operand_stack.push(peek);
+            }
+            96 => {
+                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
+                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "IADD {} {}", popped1, popped2);
+                runtime.current_frame.operand_stack.push(Variable::Int(popped1.to_int() + popped2.to_int()));
+            }
+            172 => {
+                let popped = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "IRETURN {}", popped);
+                runtime.current_frame = runtime.previous_frames.pop().unwrap();
+                runtime.current_frame.operand_stack.push(popped);
+                return Ok(());
             }
             177 => { // return
                 debugPrint!(true, 2, "Return");
@@ -713,7 +744,10 @@ pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, 
     println!("Running method {} with {} arguments", method, arguments.len());
     let mut runtime = Runtime {
         class_paths: class_paths.clone(),
-        previous_frames: Vec::new(),
+        previous_frames: vec!(Frame {
+            constant_pool: HashMap::new(),
+            operand_stack: Vec::new(),
+            local_variables: Vec::new()}),
         current_frame: Frame {
             constant_pool: class.constant_pool.clone(),
             operand_stack: Vec::new(),
@@ -730,5 +764,5 @@ pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, 
     println!("Running method");
     try!(do_run_method(&mut runtime, &code, 0));
 
-    return Ok(runtime.current_frame.local_variables[0].clone());
+    return Ok(runtime.current_frame.operand_stack.pop().unwrap().clone());
 }
