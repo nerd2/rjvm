@@ -1,6 +1,5 @@
 public class maths {
-    // method main(): ALWAYS the APPLICATION entry point
-    public static int add (int x, int y) {
-        return x + y;
+    public static int intAddSubMulDivMod (int a, int b, int c, int d, int e, int f) {
+        return ((((a + b) - c) * d) / e) % f;
     }
 }

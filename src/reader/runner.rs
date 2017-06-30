@@ -319,6 +319,12 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                     }
                 }
             },
+            21 => {
+                let index = try!(buf.read_u8());
+                let loaded = runtime.current_frame.local_variables[index as usize].clone();
+                debugPrint!(true, 2, "ILOAD {} {}", index, loaded);
+                runtime.current_frame.operand_stack.push(loaded);
+            }
             26...29 => {
                 let index = op_code - 26;
                 let loaded = runtime.current_frame.local_variables[index as usize].clone();
@@ -356,6 +362,30 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
                 debugPrint!(true, 2, "IADD {} {}", popped1, popped2);
                 runtime.current_frame.operand_stack.push(Variable::Int(popped1.to_int() + popped2.to_int()));
+            }
+            100 => {
+                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
+                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "ISUB {} {}", popped1, popped2);
+                runtime.current_frame.operand_stack.push(Variable::Int(popped2.to_int() - popped1.to_int()));
+            }
+            104 => {
+                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
+                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "IMUL {} {}", popped1, popped2);
+                runtime.current_frame.operand_stack.push(Variable::Int(popped1.to_int() * popped2.to_int()));
+            }
+            108 => {
+                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
+                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "IDIV {} {}", popped1, popped2);
+                runtime.current_frame.operand_stack.push(Variable::Int(popped2.to_int() / popped1.to_int()));
+            }
+            112 => {
+                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
+                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "IREM {} {}", popped1, popped2);
+                runtime.current_frame.operand_stack.push(Variable::Int(popped2.to_int() % popped1.to_int()));
             }
             172 => {
                 let popped = runtime.current_frame.operand_stack.pop().unwrap();

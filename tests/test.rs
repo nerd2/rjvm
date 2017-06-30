@@ -10,6 +10,11 @@ mod tests {
 
     #[test]
     fn maths() {
-        assert_eq!(run_method(Path::new("tests/maths.class"), "add", &vec!(Variable::Int(1), Variable::Int(2)), Some(&Variable::Int(0))), Variable::Int(3));
+        assert_eq!(run_method(
+            Path::new("tests/maths.class"),
+            "intAddSubMulDivMod",
+            &vec!(Variable::Int(11), Variable::Int(17), Variable::Int(3), Variable::Int(19), Variable::Int(5), Variable::Int(23)),
+            Some(&Variable::Int(0))),
+        Variable::Int(3));
     }
 }
