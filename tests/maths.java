@@ -18,4 +18,12 @@ public class maths {
     public static double doubleAddSubMulDivMod (double a, double b, double c, double d, double e, double f) {
         return ((((a + b) - c) * (-d)) / e) % f;
     }
+
+    public static int intShlShrUshr(int a, int b, int c, int d) {
+        return ((a << b) >> c) >>> d;
+    }
+
+    public static long longShlShrUshr(long a, long b, long c, long d) {
+        return ((a << b) >> c) >>> d;
+    }
 }

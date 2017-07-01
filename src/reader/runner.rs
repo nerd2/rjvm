@@ -350,15 +350,13 @@ fn load<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) { // TODO: Ty
     runtime.current_frame.operand_stack.push(loaded);
 }
 
+// TODO: Overflow checks
 fn add<F>(a: F, b: F) -> <F as std::ops::Add>::Output where F: Add { a+b }
 fn sub<F>(a: F, b: F) -> <F as std::ops::Sub>::Output where F: Sub { b-a }
 fn mul<F>(a: F, b: F) -> <F as std::ops::Mul>::Output where F: Mul { a*b }
 fn div<F>(a: F, b: F) -> <F as std::ops::Div>::Output where F: Div { b/a }
 fn rem<F>(a: F, b: F) -> <F as std::ops::Rem>::Output where F: Rem { b%a }
-fn shl<F>(a: F, b: F) -> <F as std::ops::Shl<F>>::Output where F: Shl<F> { a<<b }
-fn shr<F>(a: F, b: F) -> <F as std::ops::Shr<F>>::Output where F: Shr<F> { a>>b }
-fn ushr<F>(a: F, b: F) -> <F as std::ops::Shr<F>>::Output where F: Shr<F> { a>>b }
-fn and<F>(a: F, b: F) -> <F as std::ops::BitAnd>::Output where F: BitAnd { a&b }
+fn and<F>(a: F, b: F) -> <F as std::ops::BitAnd>::Output where F: BitAnd { b&a }
 fn or<F>(a: F, b: F) -> <F as std::ops::BitOr>::Output where F: BitOr { a|b }
 fn xor<F>(a: F, b: F) -> <F as std::ops::BitXor>::Output where F: BitXor { a^b }
 
@@ -372,6 +370,30 @@ fn maths_instr<F, G, H, K>(desc: &str, mut runtime: &mut Runtime, creator: F, ex
     let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
     debugPrint!(true, 2, "{} {} {}", desc, popped1, popped2);
     runtime.current_frame.operand_stack.push(creator(operation(extractor(&popped1), extractor(&popped2))));
+}
+
+fn maths_instr_2<F, G, H, I, J, K, L>(desc: &str, mut runtime: &mut Runtime, creator: F, extractor1: G, extractor2: H, operation: I)
+    where
+        F: Fn(L) -> Variable,
+        G: Fn(&Variable) -> J,
+        H: Fn(&Variable) -> K,
+        I: Fn(J, K) -> L
+{
+    let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
+    let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{} {} {}", desc, popped1, popped2);
+    runtime.current_frame.operand_stack.push(creator(operation(extractor1(&popped1), extractor2(&popped2))));
+}
+
+fn single_pop_instr<F, G, H, I, J>(desc: &str, mut runtime: &mut Runtime, creator: F, extractor: G, operation: H)
+    where
+    F: Fn(J) -> Variable,
+    G: Fn(&Variable) -> I,
+    H: Fn(I) -> J
+{
+    let popped = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{} {}", desc, popped);
+    runtime.current_frame.operand_stack.push(creator(operation(extractor(&popped))));
 }
 
 fn neg<F, G, K>(desc: &str, mut runtime: &mut Runtime, creator: F, extractor: G)
@@ -479,18 +501,19 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             117 => neg("LNEG", runtime, Variable::Long, Variable::to_long),
             118 => neg("FNEG", runtime, Variable::Float, Variable::to_float),
             119 => neg("DNEG", runtime, Variable::Double, Variable::to_double),
-            120 => maths_instr("ISHL", runtime, Variable::Int, Variable::to_int, shl),
-            121 => maths_instr("LSHL", runtime, Variable::Long, Variable::to_long, shl),
-            122 => maths_instr("ISHR", runtime, Variable::Int, Variable::to_int, shr),
-            123 => maths_instr("LSHR", runtime, Variable::Long, Variable::to_long, shr),
-            124 => maths_instr("IUSHR", runtime, Variable::Int, Variable::to_int, ushr),
-            125 => maths_instr("LUSHR", runtime, Variable::Long, Variable::to_long, ushr),
+            120 => maths_instr("ISHL", runtime, Variable::Int, Variable::to_int, |x,y| y << x),
+            121 => maths_instr_2("LSHL", runtime, Variable::Long, Variable::to_int, Variable::to_long, |x,y| (y << x) as i64),
+            122 => maths_instr("ISHR", runtime, Variable::Int, Variable::to_int, |x,y| y >> x),
+            123 => maths_instr_2("LSHR", runtime, Variable::Long, Variable::to_int, Variable::to_long, |x,y| (y >> x) as i64),
+            124 => maths_instr("IUSHR", runtime, Variable::Int, Variable::to_int, |x,y| ((y as u32)>>x) as i32),
+            125 => maths_instr_2("LUSHR", runtime, Variable::Long, Variable::to_int, Variable::to_long, |x,y| ((y as u64)>>x) as i64),
             126 => maths_instr("IAND", runtime, Variable::Int, Variable::to_int, and),
             127 => maths_instr("LAND", runtime, Variable::Long, Variable::to_long, and),
             128 => maths_instr("IOR", runtime, Variable::Int, Variable::to_int, or),
             129 => maths_instr("LOR", runtime, Variable::Long, Variable::to_long, or),
             130 => maths_instr("IXOR", runtime, Variable::Int, Variable::to_int, xor),
             131 => maths_instr("LXOR", runtime, Variable::Long, Variable::to_long, xor),
+            136 => single_pop_instr("L2I", runtime, Variable::Int, Variable::to_long, |x| x as i32),
             147 => {
                 let popped = runtime.current_frame.operand_stack.pop().unwrap();
                 debugPrint!(true, 2, "I2S {}", popped);
@@ -838,20 +861,6 @@ fn parse_function_type_string(classes: &HashMap<String, Rc<Class>>, string: &str
     } else {
         return Ok((parameters, Some(try!(parse_single_type_string(classes, return_type_string.as_str())))));
     }
-}
-
-fn construct_field(classes: &HashMap<String, Rc<Class>>, field: &FieldItem, constant_pool: &HashMap<u16, ConstantPoolItem>) -> Result<(Variable, Option<String>), RunnerError> {
-    let name_string = try!(get_cp_str(&constant_pool, field.name_index));
-    let descriptor_string = try!(get_cp_str(&constant_pool, field.descriptor_index));
-
-    debugPrint!(true, 3, "Constructing field {} {}", name_string, descriptor_string);
-
-    let variable = try!(parse_single_type_string(classes, descriptor_string));
-    let unres = match &variable {
-        &Variable::UnresolvedReference(ref str) => Some(str.clone()),
-        _ => None
-      };
-    return Ok((variable, unres));
 }
 
 pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
