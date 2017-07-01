@@ -15,7 +15,7 @@ mod tests {
             fn_name,
             &args,
             Some(&transform(0))),
-        transform(3));
+        transform(-3));
     }
 
     #[test]
