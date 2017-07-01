@@ -396,19 +396,6 @@ fn single_pop_instr<F, G, H, I, J>(desc: &str, mut runtime: &mut Runtime, creato
     runtime.current_frame.operand_stack.push(creator(operation(extractor(&popped))));
 }
 
-fn neg<F, G, K>(desc: &str, mut runtime: &mut Runtime, creator: F, extractor: G)
-    where
-        F: Fn(<K as std::ops::Sub>::Output) -> Variable,
-        G: Fn(&Variable) -> K,
-        K: Sub,
-        K: Default
-{
-    let popped = runtime.current_frame.operand_stack.pop().unwrap();
-    debugPrint!(true, 2, "{} {}", desc, popped);
-    runtime.current_frame.operand_stack.push(creator(<K as Default>::default() - extractor(&popped)));
-}
-
-
 fn vreturn<F, K>(desc: &str, mut runtime: &mut Runtime, extractor: F) -> Result<(), RunnerError> where F: Fn(&Variable) -> K {
     let popped = runtime.current_frame.operand_stack.pop().unwrap();
     debugPrint!(true, 2, "{} {}", desc, popped);
@@ -497,10 +484,10 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             113 => maths_instr("LREM", runtime, Variable::Long, Variable::to_long, rem),
             114 => maths_instr("FREM", runtime, Variable::Float, Variable::to_float, rem),
             115 => maths_instr("DREM", runtime, Variable::Double, Variable::to_double, rem),
-            116 => neg("INEG", runtime, Variable::Int, Variable::to_int),
-            117 => neg("LNEG", runtime, Variable::Long, Variable::to_long),
-            118 => neg("FNEG", runtime, Variable::Float, Variable::to_float),
-            119 => neg("DNEG", runtime, Variable::Double, Variable::to_double),
+            116 => single_pop_instr("INEG", runtime, Variable::Int, Variable::to_int, |x| 0 - x),
+            117 => single_pop_instr("LNEG", runtime, Variable::Long, Variable::to_long, |x| 0 - x),
+            118 => single_pop_instr("FNEG", runtime, Variable::Float, Variable::to_float, |x| 0.0 - x),
+            119 => single_pop_instr("DNEG", runtime, Variable::Double, Variable::to_double, |x| 0.0 - x),
             120 => maths_instr("ISHL", runtime, Variable::Int, Variable::to_int, |x,y| y << x),
             121 => maths_instr_2("LSHL", runtime, Variable::Long, Variable::to_int, Variable::to_long, |x,y| (y << x) as i64),
             122 => maths_instr("ISHR", runtime, Variable::Int, Variable::to_int, |x,y| y >> x),
