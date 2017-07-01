@@ -5,6 +5,16 @@ use std;
 use std::fmt;
 use std::io;
 use std::io::Cursor;
+use std::ops::Add;
+use std::ops::Sub;
+use std::ops::Mul;
+use std::ops::Div;
+use std::ops::Rem;
+use std::ops::Shl;
+use std::ops::Shr;
+use std::ops::BitAnd;
+use std::ops::BitOr;
+use std::ops::BitXor;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::path::{Path, PathBuf};
@@ -63,11 +73,55 @@ pub enum Variable {
 impl Variable {
     pub fn to_int(&self) -> i32 {
         match self {
+            &Variable::Short(ref x) => {
+                return *x as i32;
+            },
             &Variable::Int(ref x) => {
                 return *x;
             },
             _ => {
                 panic!("Couldn't convert to int");
+            }
+        }
+    }
+
+    pub fn to_long(&self) -> i64 {
+        match self {
+            &Variable::Long(ref x) => {
+                return *x;
+            },
+            _ => {
+                panic!("Couldn't convert to long");
+            }
+        }
+    }
+    pub fn to_float(&self) -> f32 {
+        match self {
+            &Variable::Float(ref x) => {
+                return *x;
+            },
+            _ => {
+                panic!("Couldn't convert to float");
+            }
+        }
+    }
+    pub fn to_double(&self) -> f64 {
+        match self {
+            &Variable::Double(ref x) => {
+                return *x;
+            },
+            _ => {
+                panic!("Couldn't convert to double");
+            }
+        }
+    }
+    pub fn to_ref(&self) -> Option<Rc<Object>> {
+        match self {
+            &Variable::Reference(ref class, ref obj) => {
+                return obj.clone();
+            },
+            _ => {
+                panic!("Couldn't convert to reference");
             }
         }
     }
@@ -290,6 +344,45 @@ fn construct_char_array(s: &str) -> Variable {
     return Variable::ArrayReference(Rc::new(Variable::Char('\0')), Some(Rc::new(v)));
 }
 
+fn load<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) { // TODO: Type checking
+    let loaded = runtime.current_frame.local_variables[index as usize].clone();
+    debugPrint!(true, 2, "{} {} {}", desc, index, loaded);
+    runtime.current_frame.operand_stack.push(loaded);
+}
+
+fn add<F>(a: F, b: F) -> <F as std::ops::Add>::Output where F: Add { a+b }
+fn sub<F>(a: F, b: F) -> <F as std::ops::Sub>::Output where F: Sub { b-a }
+fn mul<F>(a: F, b: F) -> <F as std::ops::Mul>::Output where F: Mul { a*b }
+fn div<F>(a: F, b: F) -> <F as std::ops::Div>::Output where F: Div { b/a }
+fn rem<F>(a: F, b: F) -> <F as std::ops::Rem>::Output where F: Rem { b%a }
+fn shl<F>(a: F, b: F) -> <F as std::ops::Shl<F>>::Output where F: Shl<F> { a<<b }
+fn shr<F>(a: F, b: F) -> <F as std::ops::Shr<F>>::Output where F: Shr<F> { a>>b }
+fn ushr<F>(a: F, b: F) -> <F as std::ops::Shr<F>>::Output where F: Shr<F> { a>>b }
+fn and<F>(a: F, b: F) -> <F as std::ops::BitAnd>::Output where F: BitAnd { a&b }
+fn or<F>(a: F, b: F) -> <F as std::ops::BitOr>::Output where F: BitOr { a|b }
+fn xor<F>(a: F, b: F) -> <F as std::ops::BitXor>::Output where F: BitXor { a^b }
+
+fn maths_instr<F, G, H, K>(desc: &str, mut runtime: &mut Runtime, creator: F, extractor: G, operation: H)
+    where
+    F: Fn(K) -> Variable,
+    G: Fn(&Variable) -> K,
+    H: Fn(K, K) -> K
+{
+    let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
+    let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{} {} {}", desc, popped1, popped2);
+    runtime.current_frame.operand_stack.push(creator(operation(extractor(&popped1), extractor(&popped2))));
+}
+
+fn vreturn<F, K>(desc: &str, mut runtime: &mut Runtime, extractor: F) -> Result<(), RunnerError> where F: Fn(&Variable) -> K {
+    let popped = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{} {}", desc, popped);
+    extractor(&popped); // Type check
+    runtime.current_frame = runtime.previous_frames.pop().unwrap();
+    runtime.current_frame.operand_stack.push(popped);
+    return Ok(());
+}
+
 fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
         return Err(RunnerError::InvalidPc);
@@ -319,24 +412,16 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                     }
                 }
             },
-            21 => {
-                let index = try!(buf.read_u8());
-                let loaded = runtime.current_frame.local_variables[index as usize].clone();
-                debugPrint!(true, 2, "ILOAD {} {}", index, loaded);
-                runtime.current_frame.operand_stack.push(loaded);
-            }
-            26...29 => {
-                let index = op_code - 26;
-                let loaded = runtime.current_frame.local_variables[index as usize].clone();
-                debugPrint!(true, 2, "ILOAD_{} {}", index, loaded);
-                runtime.current_frame.operand_stack.push(loaded);
-            }
-            42...45 => {
-                let index = op_code - 42;
-                let loaded = runtime.current_frame.local_variables[index as usize].clone();
-                debugPrint!(true, 2, "ALOAD_{} {}", index, loaded);
-                runtime.current_frame.operand_stack.push(loaded);
-            }
+            21 => load("ILOAD", try!(buf.read_u8()), runtime, Variable::Int),
+            22 => load("LLOAD", try!(buf.read_u8()), runtime, Variable::Long),
+            23 => load("FLOAD", try!(buf.read_u8()), runtime, Variable::Float),
+            24 => load("DLOAD", try!(buf.read_u8()), runtime, Variable::Double),
+            25 => load("ALOAD", try!(buf.read_u8()), runtime, Variable::Reference),
+            26...29 => load("ILOAD", op_code - 26, runtime, Variable::Int),
+            30...33 => load("LLOAD", op_code - 30, runtime, Variable::Long),
+            34...37 => load("LLOAD", op_code - 34, runtime, Variable::Float),
+            38...41 => load("DLOAD", op_code - 38, runtime, Variable::Double),
+            42...45 => load("ALOAD", op_code - 42, runtime, Variable::Reference),
             75...78 => {
                 let index = (op_code - 75) as usize;
                 let popped = runtime.current_frame.operand_stack.pop().unwrap();
@@ -357,43 +442,48 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 debugPrint!(true, 2, "DUP {}", peek);
                 runtime.current_frame.operand_stack.push(peek);
             }
-            96 => {
-                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
-                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "IADD {} {}", popped1, popped2);
-                runtime.current_frame.operand_stack.push(Variable::Int(popped1.to_int() + popped2.to_int()));
-            }
-            100 => {
-                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
-                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "ISUB {} {}", popped1, popped2);
-                runtime.current_frame.operand_stack.push(Variable::Int(popped2.to_int() - popped1.to_int()));
-            }
-            104 => {
-                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
-                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "IMUL {} {}", popped1, popped2);
-                runtime.current_frame.operand_stack.push(Variable::Int(popped1.to_int() * popped2.to_int()));
-            }
-            108 => {
-                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
-                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "IDIV {} {}", popped1, popped2);
-                runtime.current_frame.operand_stack.push(Variable::Int(popped2.to_int() / popped1.to_int()));
-            }
-            112 => {
-                let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
-                let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "IREM {} {}", popped1, popped2);
-                runtime.current_frame.operand_stack.push(Variable::Int(popped2.to_int() % popped1.to_int()));
-            }
-            172 => {
+            96 => maths_instr("IADD", runtime, Variable::Int, Variable::to_int, add),
+            97 => maths_instr("LADD", runtime, Variable::Long, Variable::to_long, add),
+            98 => maths_instr("FADD", runtime, Variable::Float, Variable::to_float, add),
+            99 => maths_instr("DADD", runtime, Variable::Double, Variable::to_double, add),
+            100 => maths_instr("ISUB", runtime, Variable::Int, Variable::to_int, sub),
+            101 => maths_instr("LSUB", runtime, Variable::Long, Variable::to_long, sub),
+            102 => maths_instr("FSUB", runtime, Variable::Float, Variable::to_float, sub),
+            103 => maths_instr("DSUB", runtime, Variable::Double, Variable::to_double, sub),
+            104 => maths_instr("IMUL", runtime, Variable::Int, Variable::to_int, mul),
+            105 => maths_instr("LMUL", runtime, Variable::Long, Variable::to_long, mul),
+            106 => maths_instr("FMUL", runtime, Variable::Float, Variable::to_float, mul),
+            107 => maths_instr("DMUL", runtime, Variable::Double, Variable::to_double, mul),
+            108 => maths_instr("IDIV", runtime, Variable::Int, Variable::to_int, div),
+            109 => maths_instr("LDIV", runtime, Variable::Long, Variable::to_long, div),
+            110 => maths_instr("FDIV", runtime, Variable::Float, Variable::to_float, div),
+            111 => maths_instr("DDIV", runtime, Variable::Double, Variable::to_double, div),
+            112 => maths_instr("IREM", runtime, Variable::Int, Variable::to_int, rem),
+            113 => maths_instr("LREM", runtime, Variable::Long, Variable::to_long, rem),
+            114 => maths_instr("FREM", runtime, Variable::Float, Variable::to_float, rem),
+            115 => maths_instr("DREM", runtime, Variable::Double, Variable::to_double, rem),
+            120 => maths_instr("ISHL", runtime, Variable::Int, Variable::to_int, shl),
+            121 => maths_instr("LSHL", runtime, Variable::Long, Variable::to_long, shl),
+            122 => maths_instr("ISHR", runtime, Variable::Int, Variable::to_int, shr),
+            123 => maths_instr("LSHR", runtime, Variable::Long, Variable::to_long, shr),
+            124 => maths_instr("IUSHR", runtime, Variable::Int, Variable::to_int, ushr),
+            125 => maths_instr("LUSHR", runtime, Variable::Long, Variable::to_long, ushr),
+            126 => maths_instr("IAND", runtime, Variable::Int, Variable::to_int, and),
+            127 => maths_instr("LAND", runtime, Variable::Long, Variable::to_long, and),
+            128 => maths_instr("IOR", runtime, Variable::Int, Variable::to_int, or),
+            129 => maths_instr("LOR", runtime, Variable::Long, Variable::to_long, or),
+            130 => maths_instr("IXOR", runtime, Variable::Int, Variable::to_int, xor),
+            131 => maths_instr("LXOR", runtime, Variable::Long, Variable::to_long, xor),
+            147 => {
                 let popped = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "IRETURN {}", popped);
-                runtime.current_frame = runtime.previous_frames.pop().unwrap();
-                runtime.current_frame.operand_stack.push(popped);
-                return Ok(());
+                debugPrint!(true, 2, "I2S {}", popped);
+                runtime.current_frame.operand_stack.push(Variable::Short(popped.to_int() as i16));
             }
+            172 => { return vreturn("IRETURN", runtime, Variable::to_int); }
+            173 => { return vreturn("LRETURN", runtime, Variable::to_long); }
+            174 => { return vreturn("FRETURN", runtime, Variable::to_float); }
+            175 => { return vreturn("DRETURN", runtime, Variable::to_double); }
+            176 => { return vreturn("ARETURN", runtime, Variable::to_ref); }
             177 => { // return
                 debugPrint!(true, 2, "Return");
                 return Ok(());
@@ -626,7 +716,7 @@ fn generate_variable_descriptor(var: &Variable) -> String {
         &Variable::Double(v) => {ret.push('D');},
         &Variable::Float(v) => {ret.push('F');},
         &Variable::Int(v) => {ret.push('I');},
-        &Variable::Long(v) => {ret.push('L');},
+        &Variable::Long(v) => {ret.push('J');},
         &Variable::Short(v) => {ret.push('S');},
         &Variable::Boolean(v) => {ret.push('Z');},
         &Variable::Reference(ref class, ref obj) => {
@@ -749,8 +839,6 @@ fn construct_field(classes: &HashMap<String, Rc<Class>>, field: &FieldItem, cons
 
 pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
     println!("Running");
-    let mut main_method_res : Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid);
-
     let mut runtime = Runtime {
         class_paths: class_paths.clone(),
         previous_frames: Vec::new(),
@@ -781,13 +869,29 @@ pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, 
         current_frame: Frame {
             constant_pool: class.constant_pool.clone(),
             operand_stack: Vec::new(),
-            local_variables: arguments.clone()},
+            local_variables: Vec::new()},
         classes: HashMap::new()
     };
 
     bootstrap_class_and_dependencies(&mut runtime.classes, String::new().as_str(), class, class_paths);
 
-    let method_descriptor = generate_method_descriptor(&runtime.current_frame.local_variables, return_type);
+    for arg in arguments {
+        match arg {
+            &Variable::Long(ref _x) => {
+                runtime.current_frame.local_variables.push(arg.clone());
+                runtime.current_frame.local_variables.push(arg.clone());
+            },
+            &Variable::Double(ref _x) => {
+                runtime.current_frame.local_variables.push(arg.clone());
+                runtime.current_frame.local_variables.push(arg.clone());
+            },
+            _ => {
+                runtime.current_frame.local_variables.push(arg.clone());
+            }
+        }
+    }
+
+    let method_descriptor = generate_method_descriptor(&arguments, return_type);
     debugPrint!(true, 1, "Finding method {} with descriptor {}", method, method_descriptor);
     let code = try!(get_class_method_code(class, method, method_descriptor.as_str()));
 

@@ -17,8 +17,8 @@ use self::byteorder::{BigEndian, ReadBytesExt};
 macro_rules! PRINT_LEVEL { () => {3} }
 
 macro_rules! debugPrint {
-    ($enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for n in 1..$level {print!(" "); } println!($fmt); } }};
-    ($enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL!() { for n in 1..$level {print!(" "); } println!($fmt, $($arg)*); } }};
+    ($enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$level {print!(" "); } println!($fmt); } }};
+    ($enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$level {print!(" "); } println!($fmt, $($arg)*); } }};
 }
 
 #[derive(Debug)]
