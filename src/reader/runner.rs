@@ -182,7 +182,7 @@ fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Resu
     }
 }
 
-fn load_constpool_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<&str, RunnerError> {
+fn get_cp_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<&str, RunnerError> {
     debugPrint!(false, 5, "{}", index);
 
     let maybe_cp_entry = constant_pool.get(&index);
@@ -206,7 +206,7 @@ fn load_constpool_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u
     }
 }
 
-fn load_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str), RunnerError> {
+fn get_cp_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str), RunnerError> {
     debugPrint!(false, 5, "{}", index);
 
     let maybe_cp_entry = constant_pool.get(&index);
@@ -231,7 +231,7 @@ fn load_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16
     }
 }
 
-fn load_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str, &str), RunnerError> {
+fn get_cp_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str, &str), RunnerError> {
     debugPrint!(false, 5, "{}", index);
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
@@ -240,8 +240,8 @@ fn load_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Res
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Fieldref{class_index, name_and_type_index} => {
-                let class_str = try!(load_constpool_class(constant_pool, class_index));
-                let (name_str, type_str) = try!(load_name_and_type(constant_pool, name_and_type_index));
+                let class_str = try!(get_cp_class(constant_pool, class_index));
+                let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
                 return Ok((class_str, name_str, type_str));
             }
             _ => {
@@ -252,7 +252,7 @@ fn load_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Res
     }
 }
 
-fn load_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str, &str), RunnerError> {
+fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(&str, &str, &str), RunnerError> {
     debugPrint!(false, 5, "{}", index);
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
@@ -261,8 +261,8 @@ fn load_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Re
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Methodref {class_index, name_and_type_index} => {
-                let class_str = try!(load_constpool_class(constant_pool, class_index));
-                let (name_str, type_str) = try!(load_name_and_type(constant_pool, name_and_type_index));
+                let class_str = try!(get_cp_class(constant_pool, class_index));
+                let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
                 return Ok((class_str, name_str, type_str));
             }
             _ => {
@@ -278,8 +278,9 @@ fn initialise_variable(classes: &HashMap<String, Rc<Class>>, descriptor_string: 
     return Ok(variable);
 }
 
-fn construct_object(classes: &HashMap<String, Rc<Class>>, name: &str, arguments: &Vec<Variable>) -> Result<Variable, RunnerError> {
+fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths: &Vec<String>, arguments: &Vec<Variable>) -> Result<Variable, RunnerError> {
     debugPrint!(true, 3, "Constructing object {}", name);
+    try!(load_class(classes, name, class_paths));
 
     let class = try!(classes.get(name).ok_or(RunnerError::ClassInvalid));
     let mut members : HashMap<String, Variable> = HashMap::new();
@@ -295,7 +296,7 @@ fn construct_object(classes: &HashMap<String, Rc<Class>>, name: &str, arguments:
 
         members.insert(String::from(name_string), var);
     }
-    // TODO: constructor
+    // TODO: constructor?
     let obj = Object {typeRef: class.clone(), members: members};
     return Ok(Variable::Reference(class.clone(), Some(Rc::new(obj))));
 }
@@ -415,6 +416,16 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
         let current_position = buf.position();
         let op_code = try!(buf.read_u8());
         match op_code {
+            16 => {
+                let byte = try!(buf.read_u8()) as i32;
+                debugPrint!(true, 2, "BIPUSH {}", byte);
+                runtime.current_frame.operand_stack.push(Variable::Int(byte));
+            }
+            17 => {
+                let short = try!(buf.read_u16::<BigEndian>()) as i32;
+                debugPrint!(true, 2, "SIPUSH {}", short);
+                runtime.current_frame.operand_stack.push(Variable::Int(short));
+            }
             18 => { // LDC
                 let index = try!(buf.read_u8());
                 debugPrint!(true, 2, "LDC {}", index);
@@ -427,7 +438,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                         ConstantPoolItem::CONSTANT_String { index } => {
                             let string_value = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
                             let arguments = vec!(construct_char_array(string_value));
-                            let var = try!(construct_object(&mut runtime.classes, &"java/lang/String", &arguments));
+                            let var = try!(construct_object(&mut runtime.classes, &"java/lang/String", &runtime.class_paths, &arguments));
                             runtime.current_frame.operand_stack.push(var);
                         }
                         _ => return Err(RunnerError::UnknownOpCode(op_code))
@@ -517,7 +528,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             }
             178 => { // getstatic
                 let index = try!(buf.read_u16::<BigEndian>());
-                let (class_name, field_name, typ) = try!(load_field(&runtime.current_frame.constant_pool, index));
+                let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, index));
                 debugPrint!(true, 2, "GETSTATIC {} {} {}", class_name, field_name, typ);
                 let class_result = try!(load_class(&mut runtime.classes, class_name, &runtime.class_paths));
                 let maybe_static_variable = class_result.statics.get(field_name);
@@ -528,7 +539,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             }
             180 => {
                 let field_index = try!(buf.read_u16::<BigEndian>());
-                let (class_name, field_name, typ) = try!(load_field(&runtime.current_frame.constant_pool, field_index));
+                let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
                 debugPrint!(true, 2, "GETFIELD {} {} {} {}", class_name, field_name, typ, obj);
@@ -544,7 +555,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let mut new_frame : Option<Frame> = None;
                 {
                     let index = try!(buf.read_u16::<BigEndian>());
-                    let (class_name, method_name, descriptor) = try!(load_method(&runtime.current_frame.constant_pool, index));
+                    let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
                     debugPrint!(true, 2, "INVOKEVIRTUAL {} {} {}", class_name, method_name, descriptor);
                     let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor));
                     let current_op_stack_size = runtime.current_frame.operand_stack.len();
@@ -578,6 +589,13 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 runtime.current_frame = new_frame.unwrap();
                 try!(do_run_method(&mut runtime, &code.unwrap(), 0));
             },
+            187 => {
+                let index = try!(buf.read_u16::<BigEndian>());
+                let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
+                debugPrint!(true, 2, "NEW {}", class_name);
+                let var = try!(construct_object(&mut runtime.classes, &class_name, &runtime.class_paths, &vec!()));
+                runtime.current_frame.operand_stack.push(var);
+            }
             194 => {
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 debugPrint!(true, 2, "MONITORENTER {}", var);
@@ -835,12 +853,16 @@ fn parse_function_type_string(classes: &HashMap<String, Rc<Class>>, string: &str
     }
 
     let mut parameters : Vec<Variable> = Vec::new();
-    while *iter.peek().unwrap_or(&' ') != ')' {
-        let single_type_string : String = iter.by_ref().take_while(|x| *x != ';').collect();
-        debugPrint!(debug, 3, "Found parameter {}", single_type_string);
-        parameters.push(try!(parse_single_type_string(classes, single_type_string.as_str())));
+    let mut type_char : char = '\0';
+    while {type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid)); type_char != ')'} {
+        let mut type_string = String::new();
+        type_string.push(type_char);
+        if type_char == 'L' {
+            type_string.push_str(iter.by_ref().take_while(|x| *x != ';').collect::<String>().as_str());
+        }
+        debugPrint!(debug, 3, "Found parameter {}", type_string);
+        parameters.push(try!(parse_single_type_string(classes, type_string.as_str())));
     }
-    iter.next();
 
     let return_type_string : String = iter.collect();
     if return_type_string == "V" {

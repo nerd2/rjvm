@@ -38,4 +38,9 @@ mod tests {
         shift_test("intShlShrUshr", |x| Variable::Int(x as i32), 0x3FFFFFFD as i64);
         shift_test("longShlShrUshr", |x| Variable::Long(x as i64), 0x3FFFFFFFFFFFFFFD as i64);
     }
+
+    #[test]
+    fn string() {
+        assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), Some(&Variable::Char('\0'))), Variable::Char('a'));
+    }
 }
