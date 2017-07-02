@@ -36,11 +36,12 @@ pub struct Class {
     name: String,
     initialised: bool,
     cr: ClassResult,
-    statics: HashMap<String, Variable>
+    statics: HashMap<String, Variable>,
+    super_class: Option<Rc<Class>>
 }
 impl Class {
   pub fn new(name: &String, cr: &ClassResult) -> Class {
-      return Class { name: name.clone(), initialised: false, cr: cr.clone(), statics: HashMap::new()};
+      return Class { name: name.clone(), initialised: false, cr: cr.clone(), statics: HashMap::new(), super_class: None};
   }
 }
 
@@ -281,6 +282,8 @@ fn initialise_variable(classes: &HashMap<String, Rc<Class>>, descriptor_string: 
 fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths: &Vec<String>, arguments: &Vec<Variable>) -> Result<Variable, RunnerError> {
     debugPrint!(true, 3, "Constructing object {}", name);
     try!(load_class(classes, name, class_paths));
+
+    let mut class_name = name;
 
     let class = try!(classes.get(name).ok_or(RunnerError::ClassInvalid));
     let mut members : HashMap<String, Variable> = HashMap::new();
@@ -723,6 +726,13 @@ fn find_unresolved_class_dependencies(classes: &mut HashMap<String, Rc<Class>>, 
             _ => {}
         }
     }
+
+    if class_result.super_class_index > 0 {
+        let class_name = String::from(try!(get_cp_class(&class_result.constant_pool, class_result.super_class_index)));
+        if !classes.contains_key(&class_name) {
+            unresolved_classes.insert(class_name);
+        }
+    }
     return Ok(());
 }
 
@@ -747,6 +757,10 @@ fn initialise_class(classes: &mut HashMap<String, Rc<Class>>, class: &Rc<Class>)
         let var = try!(initialise_variable(classes, descriptor_string));
 
         class_mut.statics.insert(String::from(name_string), var);
+    }
+    if class_mut.cr.super_class_index > 0 {
+        let super_class_name = String::from(try!(get_cp_class(&class_mut.cr.constant_pool, class_mut.cr.super_class_index)));
+        class_mut.super_class = Some(try!(classes.get(&super_class_name).ok_or(RunnerError::ClassInvalid)).clone());
     }
     class_mut.initialised = true;
     classes.insert(String::from(class_name), Rc::new(class_mut));
