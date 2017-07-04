@@ -144,6 +144,16 @@ impl Variable {
             }
         }
     }
+    pub fn to_arrayref(&self) -> (Rc<Variable>, &Option<Rc<Vec<Variable>>>) {
+        match self {
+            &Variable::ArrayReference(ref typee, ref array) => {
+                return (typee.clone(), array);
+            },
+            _ => {
+                panic!("Couldn't convert to reference");
+            }
+        }
+    }
 }
 impl fmt::Display for Variable {
      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -348,7 +358,7 @@ fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_d
     for method in &class.methods {
         let method_name = try!(get_cp_str(&class.constant_pool, method.name_index));
         let descriptor = try!(get_cp_str(&class.constant_pool, method.descriptor_index));
-        debugPrint!(true, 3, "Checking method {} {}", method_name, descriptor);
+        debugPrint!(false, 3, "Checking method {} {}", method_name, descriptor);
         if method_name == target_method_name &&
             descriptor == target_descriptor {
             method_res = Ok(method);
@@ -451,7 +461,7 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
     while obj.typeRef.name != class_name && obj.super_class.borrow().is_some() {
         let new_obj = obj.super_class.borrow().clone().unwrap();
         obj = new_obj;
-        debugPrint!(true, 3, "Class didn't match, checking {} now)", obj.typeRef.name);
+        debugPrint!(false, 3, "Class didn't match, checking {} now)", obj.typeRef.name);
     }
 
     if obj.typeRef.name != class_name {
@@ -683,6 +693,16 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                         });
                 }
                 runtime.current_frame.operand_stack.push(Variable::ArrayReference(Rc::new(v[0].clone()), Some(Rc::new(v))));
+            }
+            190 => {
+                let var = runtime.current_frame.operand_stack.pop().unwrap();
+                let (typee, array) = var.to_arrayref();
+                if array.is_none() {
+                    return Err(RunnerError::NullPointerException);
+                }
+                let len = array.as_ref().unwrap().len();
+                debugPrint!(true, 2, "ARRAYLEN {} {} {}", var, typee, len);
+                runtime.current_frame.operand_stack.push(Variable::Int(len as i32));
             }
             194 => {
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
