@@ -16,7 +16,9 @@ use std::ops::BitAnd;
 use std::ops::BitOr;
 use std::ops::BitXor;
 use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
 use std::rc::Rc;
+use std::rc::Weak;
 use std::path::{Path, PathBuf};
 use glob::glob;
 
@@ -34,27 +36,43 @@ pub enum RunnerError {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Class {
     name: String,
-    initialised: bool,
     cr: ClassResult,
-    statics: HashMap<String, Variable>,
-    super_class: Option<Rc<Class>>
+    initialised: RefCell<bool>,
+    statics: RefCell<HashMap<String, Variable>>,
+    super_class: RefCell<Option<Rc<Class>>>
 }
 impl Class {
   pub fn new(name: &String, cr: &ClassResult) -> Class {
-      return Class { name: name.clone(), initialised: false, cr: cr.clone(), statics: HashMap::new(), super_class: None};
+      return Class { name: name.clone(), initialised: RefCell::new(false), cr: cr.clone(), statics: RefCell::new(HashMap::new()), super_class: RefCell::new(None)};
   }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Object {
     typeRef: Rc<Class>,
-    members: HashMap<String, Variable>,
+    members: RefCell<HashMap<String, Variable>>,
+    super_class: RefCell<Option<Rc<Object>>>,
+    sub_class: RefCell<Option<Weak<Object>>>
 }
+
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Object type:{}", self.typeRef.name)
     }
 }
+impl PartialEq for Object { // Have to implement PartialEq because not derrivable for Weaks in general. We can assume the weak ref is constant.
+    fn eq(&self, other: &Self) -> bool {
+        let self_sub_class = self.sub_class.borrow();
+        let other_sub_class = other.sub_class.borrow();
+
+        return self.typeRef == other.typeRef &&
+            self.members == other.members &&
+            self_sub_class.is_some() == other_sub_class.is_some() &&
+            (self_sub_class.is_none() || (self_sub_class.clone().unwrap().upgrade() == other_sub_class.clone().unwrap().upgrade())) &&
+            self.super_class == other.super_class;
+    }
+}
+
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Variable {
@@ -280,28 +298,48 @@ fn initialise_variable(classes: &HashMap<String, Rc<Class>>, descriptor_string: 
 }
 
 fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths: &Vec<String>, arguments: &Vec<Variable>) -> Result<Variable, RunnerError> {
+    let debug = true;
     debugPrint!(true, 3, "Constructing object {}", name);
     try!(load_class(classes, name, class_paths));
 
-    let mut class_name = name;
+    let original_class = try!(classes.get(name).ok_or(RunnerError::ClassInvalid));
+    let mut original_obj : Option<Rc<Object>> = None;
+    let mut class = original_class.clone();
+    let mut sub_class : Option<Weak<Object>> = None;
 
-    let class = try!(classes.get(name).ok_or(RunnerError::ClassInvalid));
-    let mut members : HashMap<String, Variable> = HashMap::new();
-    for field in &class.cr.fields {
-        if field.access_flags & ACC_STATIC != 0 {
-            continue;
+    while true {
+        debugPrint!(debug, 3, "Constructing object of type {} with subclass {:?}", class.name, sub_class);
+        let mut members: HashMap<String, Variable> = HashMap::new();
+        for field in &class.cr.fields {
+            if field.access_flags & ACC_STATIC != 0 {
+                continue;
+            }
+
+            let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
+            let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+
+            let var = try!(initialise_variable(classes, descriptor_string));
+
+            members.insert(String::from(name_string), var);
         }
 
-        let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-        let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
-
-        let var = try!(initialise_variable(classes, descriptor_string));
-
-        members.insert(String::from(name_string), var);
+        let obj = Rc::new(Object { typeRef: class.clone(), members: RefCell::new(members), super_class: RefCell::new(None), sub_class: RefCell::new(sub_class.clone()) });
+        if original_obj.is_none() {
+            original_obj = Some(obj.clone());
+        }
+        if sub_class.is_some() {
+            let sub_class_up = sub_class.unwrap().upgrade().unwrap();
+            *sub_class_up.super_class.borrow_mut() = Some(obj.clone());
+        }
+        let maybe_super_class = class.super_class.borrow().clone();
+        if maybe_super_class.is_some() {
+            sub_class = Some(Rc::downgrade(&obj.clone()));
+            class = maybe_super_class.unwrap();
+        } else {
+            return Ok(Variable::Reference(original_class.clone(), original_obj));
+        }
     }
-    // TODO: constructor?
-    let obj = Object {typeRef: class.clone(), members: members};
-    return Ok(Variable::Reference(class.clone(), Some(Rc::new(obj))));
+    return Err(RunnerError::ClassInvalid);
 }
 
 fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
@@ -408,6 +446,22 @@ fn vreturn<F, K>(desc: &str, mut runtime: &mut Runtime, extractor: F) -> Result<
     runtime.current_frame.operand_stack.push(popped);
     return Ok(());
 }
+
+fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, RunnerError> {
+    while obj.typeRef.name != class_name && obj.super_class.borrow().is_some() {
+        let new_obj = obj.super_class.borrow().clone().unwrap();
+        obj = new_obj;
+        debugPrint!(true, 3, "Class didn't match, checking {} now)", obj.typeRef.name);
+    }
+
+    if obj.typeRef.name != class_name {
+        debugPrint!(true, 1, "Expected object on stack with class name {} but got {}", class_name, obj.typeRef.name);
+        return Err(RunnerError::ClassInvalid);
+    }
+
+    return Ok(obj);
+}
+
 
 fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
@@ -527,6 +581,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             176 => { return vreturn("ARETURN", runtime, Variable::to_ref); }
             177 => { // return
                 debugPrint!(true, 2, "Return");
+                runtime.current_frame = runtime.previous_frames.pop().unwrap();
                 return Ok(());
             }
             178 => { // getstatic
@@ -534,7 +589,8 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, index));
                 debugPrint!(true, 2, "GETSTATIC {} {} {}", class_name, field_name, typ);
                 let class_result = try!(load_class(&mut runtime.classes, class_name, &runtime.class_paths));
-                let maybe_static_variable = class_result.statics.get(field_name);
+                let statics = class_result.statics.borrow();
+                let maybe_static_variable = statics.get(field_name);
                 if maybe_static_variable.is_none() {
                     return Err(RunnerError::ClassNotLoaded(String::from(class_name)));
                 }
@@ -546,12 +602,21 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
                 debugPrint!(true, 2, "GETFIELD {} {} {} {}", class_name, field_name, typ, obj);
-                if obj.typeRef.name != class_name {
-                    debugPrint!(true, 1, "Getfield called when object on stack had incorrect type");
-                    return Err(RunnerError::ClassInvalid);
-                }
-                let member = try!(obj.members.get(field_name).ok_or(RunnerError::ClassInvalid));
+                let super_obj = try!(get_super_obj(obj, class_name));
+                let members = super_obj.members.borrow();
+                let member = try!(members.get(field_name).ok_or(RunnerError::ClassInvalid));
                 runtime.current_frame.operand_stack.push(member.clone());
+            }
+            181 => {
+                let field_index = try!(buf.read_u16::<BigEndian>());
+                let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
+                let value = runtime.current_frame.operand_stack.pop().unwrap();
+                let var = runtime.current_frame.operand_stack.pop().unwrap();
+                let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
+                debugPrint!(true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj, value);
+                let super_obj = try!(get_super_obj(obj, class_name));
+                let mut members = super_obj.members.borrow_mut();
+                members.insert(String::from(field_name), value);
             }
             182 | 183 => {  // invokevirtual, invokespecial
                 let mut code : Option<Code> = None;
@@ -566,20 +631,19 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                     let obj = new_local_variables[0].clone();
                     match obj {
                         Variable::Reference(class, maybe_ref) => {
-                            new_frame = Some(Frame {
-                                constant_pool: class.cr.constant_pool.clone(),
-                                operand_stack: Vec::new(),
-                                local_variables: new_local_variables});
-
-                            if class.name != class_name {
-                                debugPrint!(true, 1, "Expected object on stack with class name {} but got {}", class_name, class.name);
-                                return Err(RunnerError::ClassInvalid);
-                            } else if maybe_ref.is_none() {
+                            if maybe_ref.is_none() {
                                 debugPrint!(true, 1, "Expected object on stack with class name {} but got null", class_name);
                                 return Err(RunnerError::ClassInvalid);
                             }
 
-                            code = Some(try!(get_class_method_code(&class.cr, method_name, descriptor)));
+                            let super_obj = try!(get_super_obj(maybe_ref.unwrap(), class_name));
+
+                            new_frame = Some(Frame {
+                                constant_pool: super_obj.typeRef.cr.constant_pool.clone(),
+                                operand_stack: Vec::new(),
+                                local_variables: new_local_variables});
+
+                            code = Some(try!(get_class_method_code(&super_obj.typeRef.cr, method_name, descriptor)));
                         },
                         _ => {
                             debugPrint!(true, 1, "Expected object to invokevirtual on, but got something else {:?}", obj);
@@ -598,6 +662,27 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 debugPrint!(true, 2, "NEW {}", class_name);
                 let var = try!(construct_object(&mut runtime.classes, &class_name, &runtime.class_paths, &vec!()));
                 runtime.current_frame.operand_stack.push(var);
+            }
+            188 => {
+                let atype = try!(buf.read_u8());
+                let count = try!(runtime.current_frame.operand_stack.pop().ok_or(RunnerError::ClassInvalid)).to_int();
+                debugPrint!(true, 2, "NEWARRAY {} {}", atype, count);
+                let mut v : Vec<Variable> = Vec::new();
+                for c in 1..count {
+                    v.push(
+                        match atype {
+                            4 => Variable::Boolean(false),
+                            5 => Variable::Char('\0'),
+                            6 => Variable::Float(0.0),
+                            7 => Variable::Double(0.0),
+                            8 => Variable::Byte(0),
+                            9 => Variable::Short(0),
+                            10 => Variable::Int(0),
+                            11 => Variable::Long(0),
+                            _ => return Err(RunnerError::ClassInvalid)
+                        });
+                }
+                runtime.current_frame.operand_stack.push(Variable::ArrayReference(Rc::new(v[0].clone()), Some(Rc::new(v))));
             }
             194 => {
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
@@ -733,52 +818,59 @@ fn find_unresolved_class_dependencies(classes: &mut HashMap<String, Rc<Class>>, 
             unresolved_classes.insert(class_name);
         }
     }
+    if !classes.contains_key(&String::from("java/lang/Object")) {
+        unresolved_classes.insert(String::from("java/lang/Object"));
+    }
     return Ok(());
 }
 
 fn initialise_class(classes: &mut HashMap<String, Rc<Class>>, class: &Rc<Class>) -> Result<(), RunnerError> {
     debugPrint!(true, 2, "Initialising class {}", class.name);
-    if class.initialised {
+    if *class.initialised.borrow() {
         return Ok(());
     }
 
     let class_name = class.name.clone();
-    let mut class_mut = (**class).clone();
-    for field in &class_mut.cr.fields {
+    for field in &class.cr.fields {
         if field.access_flags & ACC_STATIC == 0 {
             continue;
         }
 
-        let name_string = try!(get_cp_str(&class_mut.cr.constant_pool, field.name_index));
-        let descriptor_string = try!(get_cp_str(&class_mut.cr.constant_pool, field.descriptor_index));
+        let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
+        let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
 
         debugPrint!(true, 3, "Constructing class static member {} {}", name_string, descriptor_string);
 
         let var = try!(initialise_variable(classes, descriptor_string));
 
-        class_mut.statics.insert(String::from(name_string), var);
+        class.statics.borrow_mut().insert(String::from(name_string), var);
     }
-    if class_mut.cr.super_class_index > 0 {
-        let super_class_name = String::from(try!(get_cp_class(&class_mut.cr.constant_pool, class_mut.cr.super_class_index)));
-        class_mut.super_class = Some(try!(classes.get(&super_class_name).ok_or(RunnerError::ClassInvalid)).clone());
+    if class.cr.super_class_index > 0 {
+        let super_class_name = String::from(try!(get_cp_class(&class.cr.constant_pool, class.cr.super_class_index)));
+        debugPrint!(true, 3, "Class {} has superclass {}", class.name, super_class_name);
+        *class.super_class.borrow_mut() = Some(try!(classes.get(&super_class_name).ok_or(RunnerError::ClassInvalid)).clone());
+    } else {
+        if class.name != "java/lang/Object" {
+            debugPrint!(true, 3, "Class {} has superclass {}", class.name, "java/lang/Object");
+            *class.super_class.borrow_mut() = Some(try!(classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid)).clone());
+        }
     }
-    class_mut.initialised = true;
-    classes.insert(String::from(class_name), Rc::new(class_mut));
+    *class.initialised.borrow_mut() = true;
     return Ok(());
 }
 
 fn generate_variable_descriptor(var: &Variable) -> String {
     let mut ret = String::new();
     match var {
-        &Variable::Byte(v) => {ret.push('B');},
-        &Variable::Char(v) => {ret.push('C');},
-        &Variable::Double(v) => {ret.push('D');},
-        &Variable::Float(v) => {ret.push('F');},
-        &Variable::Int(v) => {ret.push('I');},
-        &Variable::Long(v) => {ret.push('J');},
-        &Variable::Short(v) => {ret.push('S');},
-        &Variable::Boolean(v) => {ret.push('Z');},
-        &Variable::Reference(ref class, ref obj) => {
+        &Variable::Byte(_v) => {ret.push('B');},
+        &Variable::Char(_v) => {ret.push('C');},
+        &Variable::Double(_v) => {ret.push('D');},
+        &Variable::Float(_v) => {ret.push('F');},
+        &Variable::Int(_v) => {ret.push('I');},
+        &Variable::Long(_v) => {ret.push('J');},
+        &Variable::Short(_v) => {ret.push('S');},
+        &Variable::Boolean(_v) => {ret.push('Z');},
+        &Variable::Reference(ref class, ref _obj) => {
             ret.push('L');
             ret.push_str(class.name.as_str());
             ret.push(';');
