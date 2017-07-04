@@ -307,8 +307,8 @@ fn initialise_variable(classes: &HashMap<String, Rc<Class>>, descriptor_string: 
     return Ok(variable);
 }
 
-fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths: &Vec<String>, arguments: &Vec<Variable>) -> Result<Variable, RunnerError> {
-    let debug = true;
+fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_paths: &Vec<String>) -> Result<Variable, RunnerError> {
+    let debug = false;
     debugPrint!(true, 3, "Constructing object {}", name);
     try!(load_class(classes, name, class_paths));
 
@@ -353,12 +353,13 @@ fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_
 }
 
 fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
+    let debug = false;
     let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid);
 
     for method in &class.methods {
         let method_name = try!(get_cp_str(&class.constant_pool, method.name_index));
         let descriptor = try!(get_cp_str(&class.constant_pool, method.descriptor_index));
-        debugPrint!(false, 3, "Checking method {} {}", method_name, descriptor);
+        debugPrint!(debug, 3, "Checking method {} {}", method_name, descriptor);
         if method_name == target_method_name &&
             descriptor == target_descriptor {
             method_res = Ok(method);
@@ -367,7 +368,7 @@ fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_d
     }
 
     let method = try!(method_res);
-    debugPrint!(true, 3, "Found method");
+    debugPrint!(debug, 3, "Found method");
     let code = try!(method.attributes.iter().filter_map(|x|
         match x {
             &AttributeItem::Code(ref c) => Some(c),
@@ -472,6 +473,48 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
     return Ok(obj);
 }
 
+fn invoke_manual(mut runtime: &mut Runtime, obj: Rc<Object>, args: Vec<Variable>, method_name: &str, method_descriptor: &str) -> Result<(), RunnerError>{
+    debugPrint!(true, 3, "Invoking manually {} {} on {}", method_name, method_descriptor, obj);
+    let new_frame = Frame {
+        constant_pool: obj.typeRef.cr.constant_pool.clone(),
+        operand_stack: Vec::new(),
+        local_variables: args.clone()};
+
+    let code = try!(get_class_method_code(&obj.typeRef.cr, method_name, method_descriptor));
+
+    runtime.previous_frames.push(runtime.current_frame.clone());
+    runtime.current_frame = new_frame;
+    try!(do_run_method(&mut runtime, &code, 0));
+
+    return Ok(());
+}
+
+fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool) -> Result<(), RunnerError> {
+    let mut code : Option<Code> = None;
+    let mut new_frame : Option<Frame> = None;
+    {
+        let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
+        debugPrint!(true, 2, "{} {} {} {}", desc, class_name, method_name, descriptor);
+        let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor));
+        let current_op_stack_size = runtime.current_frame.operand_stack.len();
+        let extra_parameter = if with_obj {1} else {0};
+        let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
+        let class = try!(load_class(&mut runtime.classes, class_name, &runtime.class_paths));
+        new_frame = Some(Frame {
+            constant_pool: class.cr.constant_pool.clone(),
+            operand_stack: Vec::new(),
+            local_variables: new_local_variables
+        });
+
+        code = Some(try!(get_class_method_code(&class.cr, method_name, descriptor)));
+    }
+
+    runtime.previous_frames.push(runtime.current_frame.clone());
+    runtime.current_frame = new_frame.unwrap();
+    try!(do_run_method(&mut runtime, &code.unwrap(), 0));
+    return Ok(());
+}
+
 
 fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
@@ -496,16 +539,19 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             18 => { // LDC
                 let index = try!(buf.read_u8());
                 debugPrint!(true, 2, "LDC {}", index);
-                let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16));
+                let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
                 if maybe_cp_entry.is_none() {
                     debugPrint!(true, 1, "LDC failed at index {}", index);
                     return Err(RunnerError::ClassInvalid);
                 } else {
-                    match *maybe_cp_entry.unwrap() {
+                    match maybe_cp_entry.unwrap() {
                         ConstantPoolItem::CONSTANT_String { index } => {
-                            let string_value = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
-                            let arguments = vec!(construct_char_array(string_value));
-                            let var = try!(construct_object(&mut runtime.classes, &"java/lang/String", &runtime.class_paths, &arguments));
+                            let var = try!(construct_object(&mut runtime.classes, &"java/lang/String", &runtime.class_paths));
+
+                            let arguments = vec!(var.clone(), construct_char_array(try!(get_cp_str(&runtime.current_frame.constant_pool, index))));
+                            let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
+                            try!(invoke_manual(runtime, obj, arguments, "<init>", "([C)V"));
+
                             runtime.current_frame.operand_stack.push(var);
                         }
                         _ => return Err(RunnerError::UnknownOpCode(op_code))
@@ -628,49 +674,19 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let mut members = super_obj.members.borrow_mut();
                 members.insert(String::from(field_name), value);
             }
-            182 | 183 => {  // invokevirtual, invokespecial
-                let mut code : Option<Code> = None;
-                let mut new_frame : Option<Frame> = None;
-                {
-                    let index = try!(buf.read_u16::<BigEndian>());
-                    let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
-                    debugPrint!(true, 2, "INVOKEVIRTUAL {} {} {}", class_name, method_name, descriptor);
-                    let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor));
-                    let current_op_stack_size = runtime.current_frame.operand_stack.len();
-                    let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - 1);
-                    let obj = new_local_variables[0].clone();
-                    match obj {
-                        Variable::Reference(class, maybe_ref) => {
-                            if maybe_ref.is_none() {
-                                debugPrint!(true, 1, "Expected object on stack with class name {} but got null", class_name);
-                                return Err(RunnerError::ClassInvalid);
-                            }
-
-                            let super_obj = try!(get_super_obj(maybe_ref.unwrap(), class_name));
-
-                            new_frame = Some(Frame {
-                                constant_pool: super_obj.typeRef.cr.constant_pool.clone(),
-                                operand_stack: Vec::new(),
-                                local_variables: new_local_variables});
-
-                            code = Some(try!(get_class_method_code(&super_obj.typeRef.cr, method_name, descriptor)));
-                        },
-                        _ => {
-                            debugPrint!(true, 1, "Expected object to invokevirtual on, but got something else {:?}", obj);
-                            return Err(RunnerError::ClassInvalid);
-                        }
-                    }
-                }
-
-                runtime.previous_frames.push(runtime.current_frame.clone());
-                runtime.current_frame = new_frame.unwrap();
-                try!(do_run_method(&mut runtime, &code.unwrap(), 0));
+            182 | 183 => {
+                let index = try!(buf.read_u16::<BigEndian>());
+                invoke("INVOKEVIRTUAL", runtime, index, true);
             },
+            184 => {
+                let index = try!(buf.read_u16::<BigEndian>());
+                invoke("INVOKESTATIC", runtime, index, false);
+            }
             187 => {
                 let index = try!(buf.read_u16::<BigEndian>());
                 let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
                 debugPrint!(true, 2, "NEW {}", class_name);
-                let var = try!(construct_object(&mut runtime.classes, &class_name, &runtime.class_paths, &vec!()));
+                let var = try!(construct_object(&mut runtime.classes, &class_name, &runtime.class_paths));
                 runtime.current_frame.operand_stack.push(var);
             }
             188 => {
@@ -850,7 +866,6 @@ fn initialise_class(classes: &mut HashMap<String, Rc<Class>>, class: &Rc<Class>)
         return Ok(());
     }
 
-    let class_name = class.name.clone();
     for field in &class.cr.fields {
         if field.access_flags & ACC_STATIC == 0 {
             continue;
@@ -970,7 +985,7 @@ fn parse_single_type_string(classes: &HashMap<String, Rc<Class>>, string: &str) 
 }
 
 fn parse_function_type_string(classes: &HashMap<String, Rc<Class>>, string: &str) -> Result<(Vec<Variable>, Option<Variable>), RunnerError> {
-    let debug = true;
+    let debug = false;
     let mut iter = string.chars().peekable();
 
     if iter.next().unwrap_or(' ') != '(' {
@@ -982,15 +997,22 @@ fn parse_function_type_string(classes: &HashMap<String, Rc<Class>>, string: &str
     let mut type_char : char = '\0';
     while {type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid)); type_char != ')'} {
         let mut type_string = String::new();
+        while type_char == '[' {
+            type_string.push(type_char);
+            type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid));
+        }
         type_string.push(type_char);
+
         if type_char == 'L' {
             type_string.push_str(iter.by_ref().take_while(|x| *x != ';').collect::<String>().as_str());
         }
         debugPrint!(debug, 3, "Found parameter {}", type_string);
         parameters.push(try!(parse_single_type_string(classes, type_string.as_str())));
+        debugPrint!(debug, 3, "Parameters now {:?}", parameters);
     }
 
     let return_type_string : String = iter.collect();
+    debugPrint!(debug, 3, "Return type {}", return_type_string);
     if return_type_string == "V" {
         return Ok((parameters, None));
     } else {
