@@ -525,7 +525,13 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
     loop {
         let current_position = buf.position();
         let op_code = try!(buf.read_u8());
+        debugPrint!(true, 3, "Op code {}", op_code);
         match op_code {
+            2...8 => {
+                let val = (op_code as i32) - 3;
+                debugPrint!(true, 2, "ICONST {}", val);
+                runtime.current_frame.operand_stack.push(Variable::Int(val));
+            }
             16 => {
                 let byte = try!(buf.read_u8()) as i32;
                 debugPrint!(true, 2, "BIPUSH {}", byte);
@@ -676,11 +682,11 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             }
             182 | 183 => {
                 let index = try!(buf.read_u16::<BigEndian>());
-                invoke("INVOKEVIRTUAL", runtime, index, true);
+                try!(invoke("INVOKEVIRTUAL", runtime, index, true));
             },
             184 => {
                 let index = try!(buf.read_u16::<BigEndian>());
-                invoke("INVOKESTATIC", runtime, index, false);
+                try!(invoke("INVOKESTATIC", runtime, index, false));
             }
             187 => {
                 let index = try!(buf.read_u16::<BigEndian>());
