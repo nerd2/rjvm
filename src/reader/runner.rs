@@ -33,6 +33,7 @@ pub enum RunnerError {
     UnknownOpCode(u8),
     ClassNotLoaded(String),
     NullPointerException,
+    ArrayIndexOutOfBoundsException(usize, usize)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -411,6 +412,23 @@ fn load<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<(),
     return Ok(());
 }
 
+fn aload<F>(desc: &str, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
+    let index = runtime.current_frame.operand_stack.pop().unwrap().to_int();
+    let var = runtime.current_frame.operand_stack.pop().unwrap();
+    let (array_type, maybe_array) = var.to_arrayref();
+    debugPrint!(true, 2, "{} {} {:?}", desc, index, maybe_array);
+    if maybe_array.is_none() {
+        return Err(RunnerError::NullPointerException);
+    }
+
+    let array = maybe_array.as_ref().unwrap();
+    if array.len() < index as usize {
+        return Err(RunnerError::ArrayIndexOutOfBoundsException(array.len(), index as usize));
+    }
+
+    runtime.current_frame.operand_stack.push(array[index as usize].clone());
+    return Ok(());
+}
 
 fn store<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
     let popped = runtime.current_frame.operand_stack.pop().unwrap();
@@ -635,6 +653,14 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             34...37 => try!(load("FLOAD", op_code - 34, runtime, Variable::Float)),
             38...41 => try!(load("DLOAD", op_code - 38, runtime, Variable::Double)),
             42...45 => try!(load("ALOAD", op_code - 42, runtime, Variable::Reference)),
+            46 => try!(aload("IALOAD", runtime, Variable::Int)),
+            47 => try!(aload("LALOAD", runtime, Variable::Long)),
+            48 => try!(aload("FALOAD", runtime, Variable::Float)),
+            49 => try!(aload("DALOAD", runtime, Variable::Double)),
+            50 => try!(aload("AALOAD", runtime, Variable::Reference)),
+            51 => try!(aload("BALOAD", runtime, Variable::Byte)),
+            52 => try!(aload("CALOAD", runtime, Variable::Char)),
+            53 => try!(aload("SALOAD", runtime, Variable::Short)),
             54 => try!(store("ISTORE", try!(buf.read_u8()), runtime, Variable::Int)),
             55 => try!(store("LSTORE", try!(buf.read_u8()), runtime, Variable::Long)),
             56 => try!(store("FSTORE", try!(buf.read_u8()), runtime, Variable::Float)),
