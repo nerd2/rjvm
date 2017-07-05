@@ -29,6 +29,7 @@ pub enum RunnerError {
     ClassInvalid(&'static str),
     ClassInvalid2(String),
     InvalidPc,
+    IoError,
     NativeMethod(String),
     UnknownOpCode(u8),
     ClassNotLoaded(String),
@@ -192,7 +193,7 @@ fn last_mut(v : &mut Vec<Frame>) -> &mut Frame {
 
 impl From<io::Error> for RunnerError {
     fn from(err: io::Error) -> RunnerError {
-        RunnerError::ClassInvalid("Error")
+        RunnerError::IoError
     }
 }
 
@@ -835,7 +836,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let count = try!(runtime.current_frame.operand_stack.pop().ok_or(RunnerError::ClassInvalid("Error"))).to_int();
                 debugPrint!(true, 2, "NEWARRAY {} {}", atype, count);
                 let mut v : Vec<Variable> = Vec::new();
-                for c in 1..count {
+                for c in 0..count {
                     v.push(
                         match atype {
                             4 => Variable::Boolean(false),
