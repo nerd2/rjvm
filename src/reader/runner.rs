@@ -88,7 +88,7 @@ pub enum Variable {
     Short(i16),
     Boolean(bool),
     Reference(Rc<Class>, Option<Rc<Object>>),
-    ArrayReference(Rc<Variable>, Option<Rc<Vec<Variable>>>), // First argument is dummy for array type
+    ArrayReference(Rc<Variable>, Option<Rc<RefCell<Vec<Variable>>>>), // First argument is dummy for array type
     InterfaceReference(Rc<Object>),
     UnresolvedReference(String),
 }
@@ -147,7 +147,7 @@ impl Variable {
             }
         }
     }
-    pub fn to_arrayref(&self) -> (Rc<Variable>, &Option<Rc<Vec<Variable>>>) {
+    pub fn to_arrayref(&self) -> (Rc<Variable>, &Option<Rc<RefCell<Vec<Variable>>>>) {
         match self {
             &Variable::ArrayReference(ref typee, ref array) => {
                 return (typee.clone(), array);
@@ -402,7 +402,7 @@ fn construct_char_array(s: &str) -> Variable {
     for c in s.chars() {
         v.push(Variable::Char(c));
     }
-    return Variable::ArrayReference(Rc::new(Variable::Char('\0')), Some(Rc::new(v)));
+    return Variable::ArrayReference(Rc::new(Variable::Char('\0')), Some(Rc::new(RefCell::new(v))));
 }
 
 fn load<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
@@ -421,7 +421,7 @@ fn aload<F>(desc: &str, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerErr
         return Err(RunnerError::NullPointerException);
     }
 
-    let array = maybe_array.as_ref().unwrap();
+    let array = maybe_array.as_ref().unwrap().borrow();
     if array.len() < index as usize {
         return Err(RunnerError::ArrayIndexOutOfBoundsException(array.len(), index as usize));
     }
@@ -445,6 +445,25 @@ fn store<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<()
     return Ok(());
 }
 
+
+fn astore<F>(desc: &str, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
+    let value = runtime.current_frame.operand_stack.pop().unwrap();
+    let index = runtime.current_frame.operand_stack.pop().unwrap().to_int();
+    let var = runtime.current_frame.operand_stack.pop().unwrap();
+    let (array_type, maybe_array) = var.to_arrayref();
+    debugPrint!(true, 2, "{} {} {:?}", desc, index, maybe_array);
+    if maybe_array.is_none() {
+        return Err(RunnerError::NullPointerException);
+    }
+
+    let mut array = maybe_array.as_ref().unwrap().borrow_mut();
+    if array.len() < index as usize {
+        return Err(RunnerError::ArrayIndexOutOfBoundsException(array.len(), index as usize));
+    }
+
+    array[index as usize] = value;
+    return Ok(());
+}
 
 // TODO: Overflow checks
 fn add<F>(a: F, b: F) -> <F as std::ops::Add>::Output where F: Add { a+b }
@@ -604,7 +623,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
     loop {
         let current_position = buf.position();
         let op_code = try!(buf.read_u8());
-        debugPrint!(true, 3, "Op code {}", op_code);
+        debugPrint!(false, 3, "Op code {}", op_code);
         match op_code {
             2...8 => {
                 let val = (op_code as i32) - 3;
@@ -671,6 +690,14 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             67...70 => try!(store("FSTORE", op_code - 67, runtime, Variable::Float)),
             71...74 => try!(store("DSTORE", op_code - 71, runtime, Variable::Double)),
             75...78 => try!(store("ASTORE", op_code - 75, runtime, Variable::Reference)),
+            79 => try!(astore("IASTORE", runtime, Variable::Int)),
+            80 => try!(astore("LASTORE", runtime, Variable::Long)),
+            81 => try!(astore("FASTORE", runtime, Variable::Float)),
+            82 => try!(astore("DASTORE", runtime, Variable::Double)),
+            83 => try!(astore("AASTORE", runtime, Variable::Reference)),
+            84 => try!(astore("BASTORE", runtime, Variable::Byte)),
+            85 => try!(astore("CASTORE", runtime, Variable::Char)),
+            86 => try!(astore("SASTORE", runtime, Variable::Short)),
             89 => {
                 let stack_len = runtime.current_frame.operand_stack.len();
                 let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
@@ -814,7 +841,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                             _ => return Err(RunnerError::ClassInvalid("Error"))
                         });
                 }
-                runtime.current_frame.operand_stack.push(Variable::ArrayReference(Rc::new(v[0].clone()), Some(Rc::new(v))));
+                runtime.current_frame.operand_stack.push(Variable::ArrayReference(Rc::new(v[0].clone()), Some(Rc::new(RefCell::new(v)))));
             }
             190 => {
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
@@ -822,7 +849,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 if array.is_none() {
                     return Err(RunnerError::NullPointerException);
                 }
-                let len = array.as_ref().unwrap().len();
+                let len = array.as_ref().unwrap().borrow().len();
                 debugPrint!(true, 2, "ARRAYLEN {} {} {}", var, typee, len);
                 runtime.current_frame.operand_stack.push(Variable::Int(len as i32));
             }
