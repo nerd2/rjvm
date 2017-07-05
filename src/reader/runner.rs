@@ -586,11 +586,11 @@ fn ifcmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>
     where F: Fn(i32) -> bool
 {
     let current_position = buf.position();
-    let branch_offset = try!(buf.read_u16::<BigEndian>());
+    let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
     let popped = runtime.current_frame.operand_stack.pop().unwrap();
     debugPrint!(true, 2, "{} {} {}", desc, popped, branch_offset);
     if cmp(popped.to_int()) {
-        let new_position = current_position + branch_offset as u64;
+        let new_position = (current_position as i64 + branch_offset as i64) as u64;
         debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
         buf.set_position(new_position);
     }
@@ -602,12 +602,12 @@ fn icmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>
     where F: Fn(i32, i32) -> bool
 {
     let current_position = buf.position();
-    let branch_offset = try!(buf.read_u16::<BigEndian>());
+    let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
     let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
     let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
     debugPrint!(true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
     if cmp(popped1.to_int(), popped2.to_int()) {
-        let new_position = current_position + branch_offset as u64;
+        let new_position = (current_position as i64 + branch_offset as i64) as u64;
         debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
         buf.set_position(new_position);
     }
@@ -740,6 +740,13 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             129 => maths_instr("LOR", runtime, Variable::Long, Variable::to_long, or),
             130 => maths_instr("IXOR", runtime, Variable::Int, Variable::to_int, xor),
             131 => maths_instr("LXOR", runtime, Variable::Long, Variable::to_long, xor),
+            132 => {
+                let index = try!(buf.read_u8());
+                let constt = try!(buf.read_u8()) as i8;
+                debugPrint!(true, 2, "IINC {} {}", index, constt);
+                let old_val = runtime.current_frame.local_variables[index as usize].to_int();
+                runtime.current_frame.local_variables[index as usize] = Variable::Int(old_val + constt as i32);
+            }
             136 => single_pop_instr("L2I", runtime, Variable::Int, Variable::to_long, |x| x as i32),
             147 => {
                 let popped = runtime.current_frame.operand_stack.pop().unwrap();
@@ -759,9 +766,10 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             163 => try!(icmp("IF_ICMPGT", runtime, &mut buf, |x,y| x > y)),
             164 => try!(icmp("IF_ICMPLE", runtime, &mut buf, |x,y| x <= y)),
             167 => {
-                let branch_offset = try!(buf.read_u16::<BigEndian>()) as u64;
-                debugPrint!(true, 2, "BRANCH from {} to {}", current_position, current_position + branch_offset);
-                buf.set_position(current_position + branch_offset);
+                let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
+                let new_pos = (current_position as i64 + branch_offset as i64) as u64;
+                debugPrint!(true, 2, "BRANCH from {} to {}", current_position, new_pos);
+                buf.set_position(new_pos);
             }
             172 => { return vreturn("IRETURN", runtime, Variable::to_int); }
             173 => { return vreturn("LRETURN", runtime, Variable::to_long); }
@@ -876,13 +884,14 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 debugPrint!(true, 1, "WARNING: MonitorEnter not implemented");
             },
             199 => {
-                let branch_offset = try!(buf.read_u16::<BigEndian>()) as u64;
+                let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 debugPrint!(true, 2, "IFNONNULL {} {}", var, branch_offset);
                 let maybe_obj = try!(get_obj_instance_from_variable(&var));
                 if maybe_obj.is_some() {
-                    debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, current_position + branch_offset);
-                    buf.set_position(current_position + branch_offset);
+                    let new_pos = (current_position as i64 + branch_offset as i64) as u64;
+                    debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_pos);
+                    buf.set_position(new_pos);
                 }
             }
             _ => return Err(RunnerError::UnknownOpCode(op_code))
