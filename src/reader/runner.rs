@@ -26,8 +26,10 @@ use self::byteorder::{BigEndian, ReadBytesExt};
 
 #[derive(Debug)]
 pub enum RunnerError {
-    ClassInvalid,
+    ClassInvalid(&'static str),
+    ClassInvalid2(String),
     InvalidPc,
+    NativeMethod(String),
     UnknownOpCode(u8),
     ClassNotLoaded(String),
     NullPointerException,
@@ -189,7 +191,7 @@ fn last_mut(v : &mut Vec<Frame>) -> &mut Frame {
 
 impl From<io::Error> for RunnerError {
     fn from(err: io::Error) -> RunnerError {
-        RunnerError::ClassInvalid
+        RunnerError::ClassInvalid("Error")
     }
 }
 
@@ -197,7 +199,7 @@ fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Resu
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP string {}", index);
-        return Err(RunnerError::ClassInvalid);
+        return Err(RunnerError::ClassInvalid2(format!("Missing CP string {}", index)));
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Utf8(ref s) => {
@@ -205,7 +207,7 @@ fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Resu
             }
             _ => {
                 debugPrint!(true, 1, "CP item at index {} is not utf8", index);
-                return Err(RunnerError::ClassInvalid);
+                return Err(RunnerError::ClassInvalid("Error"));
             }
         }
     }
@@ -217,7 +219,7 @@ fn get_cp_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> R
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP class {}", index);
-        return Err(RunnerError::ClassInvalid);
+        return Err(RunnerError::ClassInvalid("Error"));
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Class {index} => {
@@ -229,7 +231,7 @@ fn get_cp_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> R
             _ => {
                 println!("Index {} is not a class", index);
 
-                return Err(RunnerError::ClassInvalid);
+                return Err(RunnerError::ClassInvalid("Error"));
             }
         }
     }
@@ -241,7 +243,7 @@ fn get_cp_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP name & type {}", index);
-        return Err(RunnerError::ClassInvalid);
+        return Err(RunnerError::ClassInvalid("Error"));
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_NameAndType {name_index, descriptor_index} => {
@@ -254,7 +256,7 @@ fn get_cp_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u
             _ => {
                 println!("Index {} is not a name and type", index);
 
-                return Err(RunnerError::ClassInvalid);
+                return Err(RunnerError::ClassInvalid("Error"));
             }
         }
     }
@@ -265,7 +267,7 @@ fn get_cp_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> R
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP field {}", index);
-        return Err(RunnerError::ClassInvalid);
+        return Err(RunnerError::ClassInvalid("Error"));
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Fieldref{class_index, name_and_type_index} => {
@@ -275,7 +277,7 @@ fn get_cp_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> R
             }
             _ => {
                 println!("Index {} is not a field", index);
-                return Err(RunnerError::ClassInvalid);
+                return Err(RunnerError::ClassInvalid("Error"));
             }
         }
     }
@@ -286,7 +288,7 @@ fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> 
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP method {}", index);
-        return Err(RunnerError::ClassInvalid);
+        return Err(RunnerError::ClassInvalid("Error"));
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Methodref {class_index, name_and_type_index} => {
@@ -296,7 +298,7 @@ fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> 
             }
             _ => {
                 println!("Index {} is not a method", index);
-                return Err(RunnerError::ClassInvalid);
+                return Err(RunnerError::ClassInvalid("Error"));
             }
         }
     }
@@ -312,7 +314,7 @@ fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_
     debugPrint!(true, 3, "Constructing object {}", name);
     try!(load_class(classes, name, class_paths));
 
-    let original_class = try!(classes.get(name).ok_or(RunnerError::ClassInvalid));
+    let original_class = try!(classes.get(name).ok_or(RunnerError::ClassInvalid("Error")));
     let mut original_obj : Option<Rc<Object>> = None;
     let mut class = original_class.clone();
     let mut sub_class : Option<Weak<Object>> = None;
@@ -349,12 +351,13 @@ fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_
             return Ok(Variable::Reference(original_class.clone(), original_obj));
         }
     }
-    return Err(RunnerError::ClassInvalid);
+    return Err(RunnerError::ClassInvalid("Error"));
 }
 
 fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
-    let debug = false;
-    let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid);
+    let debug = true;
+    let class_name = try!(get_cp_class(&class.constant_pool, class.this_class_index));
+    let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid2(format!("Could not find method {} with descriptor {}", target_method_name, target_descriptor)));
 
     for method in &class.methods {
         let method_name = try!(get_cp_str(&class.constant_pool, method.name_index));
@@ -369,13 +372,17 @@ fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_d
 
     let method = try!(method_res);
     debugPrint!(debug, 3, "Found method");
-    let code = try!(method.attributes.iter().filter_map(|x|
-        match x {
-            &AttributeItem::Code(ref c) => Some(c),
-            _ => None
-        })
-        .nth(0).ok_or(RunnerError::ClassInvalid));
-    return Ok(code.clone());
+    if method.access_flags & ACC_NATIVE != 0 {
+        return Err(RunnerError::NativeMethod(format!("Method '{}' in class '{}'", target_method_name, class_name)));
+    } else {
+        let code = try!(method.attributes.iter().filter_map(|x|
+            match x {
+                &AttributeItem::Code(ref c) => Some(c),
+                _ => None
+            })
+            .nth(0).ok_or(RunnerError::ClassInvalid("Class method has no code")));
+        return Ok(code.clone());
+    }
 }
 
 fn get_obj_instance_from_variable(var: &Variable) -> Result<Option<Rc<Object>>, RunnerError> {
@@ -384,7 +391,7 @@ fn get_obj_instance_from_variable(var: &Variable) -> Result<Option<Rc<Object>>, 
             return Ok(objref.clone());
         },
         _ => {
-            return Err(RunnerError::ClassInvalid);
+            return Err(RunnerError::ClassInvalid("Error"));
         }
     }
 }
@@ -397,11 +404,29 @@ fn construct_char_array(s: &str) -> Variable {
     return Variable::ArrayReference(Rc::new(Variable::Char('\0')), Some(Rc::new(v)));
 }
 
-fn load<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) { // TODO: Type checking
+fn load<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
     let loaded = runtime.current_frame.local_variables[index as usize].clone();
     debugPrint!(true, 2, "{} {} {}", desc, index, loaded);
     runtime.current_frame.operand_stack.push(loaded);
+    return Ok(());
 }
+
+
+fn store<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
+    let popped = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{}_{} {}", desc, index, popped);
+    let local_len = runtime.current_frame.local_variables.len();
+    if local_len > index as usize {
+        runtime.current_frame.local_variables[index as usize] = popped;
+    } else if local_len == index as usize {
+        runtime.current_frame.local_variables.push(popped);
+    } else {
+        debugPrint!(true, 1, "Asked to store into local variables at index {} when current size is only {}", index, local_len);
+        return Err(RunnerError::InvalidPc);
+    }
+    return Ok(());
+}
+
 
 // TODO: Overflow checks
 fn add<F>(a: F, b: F) -> <F as std::ops::Add>::Output where F: Add { a+b }
@@ -467,7 +492,7 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
 
     if obj.typeRef.name != class_name {
         debugPrint!(true, 1, "Expected object on stack with class name {} but got {}", class_name, obj.typeRef.name);
-        return Err(RunnerError::ClassInvalid);
+        return Err(RunnerError::ClassInvalid("Error"));
     }
 
     return Ok(obj);
@@ -490,16 +515,20 @@ fn invoke_manual(mut runtime: &mut Runtime, obj: Rc<Object>, args: Vec<Variable>
 }
 
 fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool) -> Result<(), RunnerError> {
+    let debug = true;
     let mut code : Option<Code> = None;
     let mut new_frame : Option<Frame> = None;
     {
         let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
         debugPrint!(true, 2, "{} {} {} {}", desc, class_name, method_name, descriptor);
         let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor));
+        debugPrint!(debug, 3, "Parsed function with parameters {:?}", parameters);
         let current_op_stack_size = runtime.current_frame.operand_stack.len();
         let extra_parameter = if with_obj {1} else {0};
         let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
+        debugPrint!(debug, 3, "Split off new local variables {:?}", new_local_variables);
         let class = try!(load_class(&mut runtime.classes, class_name, &runtime.class_paths));
+        debugPrint!(debug, 3, "Loaded class");
         new_frame = Some(Frame {
             constant_pool: class.cr.constant_pool.clone(),
             operand_stack: Vec::new(),
@@ -507,6 +536,7 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool) -> 
         });
 
         code = Some(try!(get_class_method_code(&class.cr, method_name, descriptor)));
+        debugPrint!(debug, 3, "Found code");
     }
 
     runtime.previous_frames.push(runtime.current_frame.clone());
@@ -515,6 +545,37 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool) -> 
     return Ok(());
 }
 
+fn ifcmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
+    where F: Fn(i32) -> bool
+{
+    let current_position = buf.position();
+    let branch_offset = try!(buf.read_u16::<BigEndian>());
+    let popped = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{} {} {}", desc, popped, branch_offset);
+    if cmp(popped.to_int()) {
+        let new_position = current_position + branch_offset as u64;
+        debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
+        buf.set_position(new_position);
+    }
+    return Ok(());
+}
+
+
+fn icmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
+    where F: Fn(i32, i32) -> bool
+{
+    let current_position = buf.position();
+    let branch_offset = try!(buf.read_u16::<BigEndian>());
+    let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
+    let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
+    if cmp(popped1.to_int(), popped2.to_int()) {
+        let new_position = current_position + branch_offset as u64;
+        debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
+        buf.set_position(new_position);
+    }
+    return Ok(());
+}
 
 fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
@@ -548,7 +609,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
                 if maybe_cp_entry.is_none() {
                     debugPrint!(true, 1, "LDC failed at index {}", index);
-                    return Err(RunnerError::ClassInvalid);
+                    return Err(RunnerError::ClassInvalid("Error"));
                 } else {
                     match maybe_cp_entry.unwrap() {
                         ConstantPoolItem::CONSTANT_String { index } => {
@@ -564,30 +625,26 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                     }
                 }
             },
-            21 => load("ILOAD", try!(buf.read_u8()), runtime, Variable::Int),
-            22 => load("LLOAD", try!(buf.read_u8()), runtime, Variable::Long),
-            23 => load("FLOAD", try!(buf.read_u8()), runtime, Variable::Float),
-            24 => load("DLOAD", try!(buf.read_u8()), runtime, Variable::Double),
-            25 => load("ALOAD", try!(buf.read_u8()), runtime, Variable::Reference),
-            26...29 => load("ILOAD", op_code - 26, runtime, Variable::Int),
-            30...33 => load("LLOAD", op_code - 30, runtime, Variable::Long),
-            34...37 => load("LLOAD", op_code - 34, runtime, Variable::Float),
-            38...41 => load("DLOAD", op_code - 38, runtime, Variable::Double),
-            42...45 => load("ALOAD", op_code - 42, runtime, Variable::Reference),
-            75...78 => {
-                let index = (op_code - 75) as usize;
-                let popped = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "ASTORE_{} {}", index, popped);
-                let local_len = runtime.current_frame.local_variables.len();
-                if local_len > index {
-                    runtime.current_frame.local_variables[index as usize] = popped;
-                } else if local_len == index {
-                    runtime.current_frame.local_variables.push(popped);
-                } else {
-                    debugPrint!(true, 1, "Asked to store into local variables at index {} when current size is only {}", index, local_len);
-                    return Err(RunnerError::InvalidPc);
-                }
-            }
+            21 => try!(load("ILOAD", try!(buf.read_u8()), runtime, Variable::Int)),
+            22 => try!(load("LLOAD", try!(buf.read_u8()), runtime, Variable::Long)),
+            23 => try!(load("FLOAD", try!(buf.read_u8()), runtime, Variable::Float)),
+            24 => try!(load("DLOAD", try!(buf.read_u8()), runtime, Variable::Double)),
+            25 => try!(load("ALOAD", try!(buf.read_u8()), runtime, Variable::Reference)),
+            26...29 => try!(load("ILOAD", op_code - 26, runtime, Variable::Int)),
+            30...33 => try!(load("LLOAD", op_code - 30, runtime, Variable::Long)),
+            34...37 => try!(load("FLOAD", op_code - 34, runtime, Variable::Float)),
+            38...41 => try!(load("DLOAD", op_code - 38, runtime, Variable::Double)),
+            42...45 => try!(load("ALOAD", op_code - 42, runtime, Variable::Reference)),
+            54 => try!(store("ISTORE", try!(buf.read_u8()), runtime, Variable::Int)),
+            55 => try!(store("LSTORE", try!(buf.read_u8()), runtime, Variable::Long)),
+            56 => try!(store("FSTORE", try!(buf.read_u8()), runtime, Variable::Float)),
+            57 => try!(store("DSTORE", try!(buf.read_u8()), runtime, Variable::Double)),
+            58 => try!(store("ASTORE", try!(buf.read_u8()), runtime, Variable::Reference)),
+            59...62 => try!(store("ISTORE", op_code - 59, runtime, Variable::Int)),
+            63...66 => try!(store("LSTORE", op_code - 63, runtime, Variable::Long)),
+            67...70 => try!(store("FSTORE", op_code - 67, runtime, Variable::Float)),
+            71...74 => try!(store("DSTORE", op_code - 71, runtime, Variable::Double)),
+            75...78 => try!(store("ASTORE", op_code - 75, runtime, Variable::Reference)),
             89 => {
                 let stack_len = runtime.current_frame.operand_stack.len();
                 let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
@@ -636,6 +693,23 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 debugPrint!(true, 2, "I2S {}", popped);
                 runtime.current_frame.operand_stack.push(Variable::Short(popped.to_int() as i16));
             }
+            153 => try!(ifcmp("IFEQ", runtime, &mut buf, |x| x == 0)),
+            154 => try!(ifcmp("IFNE", runtime, &mut buf, |x| x != 0)),
+            155 => try!(ifcmp("IFLT", runtime, &mut buf, |x| x < 0)),
+            156 => try!(ifcmp("IFGE", runtime, &mut buf, |x| x >= 0)),
+            157 => try!(ifcmp("IFGT", runtime, &mut buf, |x| x > 0)),
+            158 => try!(ifcmp("IFLE", runtime, &mut buf, |x| x <= 0)),
+            159 => try!(ifcmp("IFEQ", runtime, &mut buf, |x| x == 0)),
+            160 => try!(icmp("IF_ICMPNE", runtime, &mut buf, |x,y| x != y)),
+            161 => try!(icmp("IF_ICMPLT", runtime, &mut buf, |x,y| x < y)),
+            162 => try!(icmp("IF_ICMPGE", runtime, &mut buf, |x,y| x >= y)),
+            163 => try!(icmp("IF_ICMPGT", runtime, &mut buf, |x,y| x > y)),
+            164 => try!(icmp("IF_ICMPLE", runtime, &mut buf, |x,y| x <= y)),
+            167 => {
+                let branch_offset = try!(buf.read_u16::<BigEndian>()) as u64;
+                debugPrint!(true, 2, "BRANCH from {} to {}", current_position, current_position + branch_offset);
+                buf.set_position(current_position + branch_offset);
+            }
             172 => { return vreturn("IRETURN", runtime, Variable::to_int); }
             173 => { return vreturn("LRETURN", runtime, Variable::to_long); }
             174 => { return vreturn("FRETURN", runtime, Variable::to_float); }
@@ -666,7 +740,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 debugPrint!(true, 2, "GETFIELD {} {} {} {}", class_name, field_name, typ, obj);
                 let super_obj = try!(get_super_obj(obj, class_name));
                 let members = super_obj.members.borrow();
-                let member = try!(members.get(field_name).ok_or(RunnerError::ClassInvalid));
+                let member = try!(members.get(field_name).ok_or(RunnerError::ClassInvalid("Error")));
                 runtime.current_frame.operand_stack.push(member.clone());
             }
             181 => {
@@ -697,7 +771,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             }
             188 => {
                 let atype = try!(buf.read_u8());
-                let count = try!(runtime.current_frame.operand_stack.pop().ok_or(RunnerError::ClassInvalid)).to_int();
+                let count = try!(runtime.current_frame.operand_stack.pop().ok_or(RunnerError::ClassInvalid("Error"))).to_int();
                 debugPrint!(true, 2, "NEWARRAY {} {}", atype, count);
                 let mut v : Vec<Variable> = Vec::new();
                 for c in 1..count {
@@ -711,7 +785,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                             9 => Variable::Short(0),
                             10 => Variable::Int(0),
                             11 => Variable::Long(0),
-                            _ => return Err(RunnerError::ClassInvalid)
+                            _ => return Err(RunnerError::ClassInvalid("Error"))
                         });
                 }
                 runtime.current_frame.operand_stack.push(Variable::ArrayReference(Rc::new(v[0].clone()), Some(Rc::new(v))));
@@ -725,6 +799,21 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let len = array.as_ref().unwrap().len();
                 debugPrint!(true, 2, "ARRAYLEN {} {} {}", var, typee, len);
                 runtime.current_frame.operand_stack.push(Variable::Int(len as i32));
+            }
+            192 => {
+                let var = runtime.current_frame.operand_stack.pop().unwrap();
+                let index = try!(buf.read_u16::<BigEndian>());
+
+                debugPrint!(true, 2, "CHECKCAST {} {}", var, index);
+
+                let maybe_cp_entry = runtime.current_frame.constant_pool.get(&index);
+                if maybe_cp_entry.is_none() {
+                    debugPrint!(true, 1, "Missing CP class {}", index);
+                    return Err(RunnerError::ClassInvalid("Error"));
+                } else {
+                    // TODO: CHECKCAST (noop)
+                    runtime.current_frame.operand_stack.push(var);
+                }
             }
             194 => {
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
@@ -889,11 +978,11 @@ fn initialise_class(classes: &mut HashMap<String, Rc<Class>>, class: &Rc<Class>)
     if class.cr.super_class_index > 0 {
         let super_class_name = String::from(try!(get_cp_class(&class.cr.constant_pool, class.cr.super_class_index)));
         debugPrint!(true, 3, "Class {} has superclass {}", class.name, super_class_name);
-        *class.super_class.borrow_mut() = Some(try!(classes.get(&super_class_name).ok_or(RunnerError::ClassInvalid)).clone());
+        *class.super_class.borrow_mut() = Some(try!(classes.get(&super_class_name).ok_or(RunnerError::ClassInvalid("Error"))).clone());
     } else {
         if class.name != "java/lang/Object" {
             debugPrint!(true, 3, "Class {} has superclass {}", class.name, "java/lang/Object");
-            *class.super_class.borrow_mut() = Some(try!(classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid)).clone());
+            *class.super_class.borrow_mut() = Some(try!(classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid("Error"))).clone());
         }
     }
     *class.initialised.borrow_mut() = true;
@@ -948,7 +1037,7 @@ fn parse_single_type_string(classes: &HashMap<String, Rc<Class>>, string: &str) 
 
     if maybe_type_specifier.is_none() {
         debugPrint!(true, 2, "Type specifier blank");
-        return Err(RunnerError::ClassInvalid);
+        return Err(RunnerError::ClassInvalid("Error"));
     }
 
     let mut array_depth = 0;
@@ -959,7 +1048,7 @@ fn parse_single_type_string(classes: &HashMap<String, Rc<Class>>, string: &str) 
 
     if maybe_type_specifier.is_none() {
         debugPrint!(true, 2, "Type specifier invalid {}", string);
-        return Err(RunnerError::ClassInvalid);
+        return Err(RunnerError::ClassInvalid("Error"));
     }
 
     let mut variable = Variable::Int(0);
@@ -983,7 +1072,7 @@ fn parse_single_type_string(classes: &HashMap<String, Rc<Class>>, string: &str) 
         'Z' => variable = Variable::Boolean(false),
         _ => {
             debugPrint!(true, 1, "Type string {} unrecognised", string);
-            return Err(RunnerError::ClassInvalid);
+            return Err(RunnerError::ClassInvalid("Error"));
         }
     }
 
@@ -995,17 +1084,17 @@ fn parse_function_type_string(classes: &HashMap<String, Rc<Class>>, string: &str
     let mut iter = string.chars().peekable();
 
     if iter.next().unwrap_or(' ') != '(' {
-        debugPrint!(debug, 2, "Type {} invalid", string);
-        return Err(RunnerError::ClassInvalid);
+        debugPrint!(true, 2, "Type {} invalid", string);
+        return Err(RunnerError::ClassInvalid("Error"));
     }
 
     let mut parameters : Vec<Variable> = Vec::new();
     let mut type_char : char = '\0';
-    while {type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid)); type_char != ')'} {
+    while {type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid("Error"))); type_char != ')'} {
         let mut type_string = String::new();
         while type_char == '[' {
             type_string.push(type_char);
-            type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid));
+            type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid("Error")));
         }
         type_string.push(type_char);
 
