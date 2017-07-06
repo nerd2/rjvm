@@ -171,6 +171,29 @@ impl Variable {
             }
         }
     }
+    pub fn is_type_1(&self) -> bool {
+        match self {
+            &Variable::Long(_x) => {
+                return false;
+            },
+            &Variable::Double(_y) => {
+                return false;
+            },
+            _ => {
+                return true;
+            }
+        }
+    }
+    pub fn can_convert_to_int(&self) -> bool {
+        return match self {
+            &Variable::Boolean(_x) => true,
+            &Variable::Byte(_x) => true,
+            &Variable::Short(_x) => true,
+            &Variable::Char(_x) => true,
+            &Variable::Int(_x) => true,
+            _ => false,
+        }
+    }
 }
 impl fmt::Display for Variable {
      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -197,6 +220,7 @@ struct Runtime {
     current_frame: Frame,
     class_paths: Vec<String>,
     classes: HashMap<String, Rc<Class>>,
+    count: i64
 }
 
 fn last_mut(v : &mut Vec<Frame>) -> &mut Frame {
@@ -543,7 +567,7 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
 
     if obj.typeRef.name != class_name {
         debugPrint!(true, 1, "Expected object on stack with class name {} but got {}", class_name, obj.typeRef.name);
-        return Err(RunnerError::ClassInvalid("Error"));
+        return Err(RunnerError::ClassInvalid2(format!("Couldn't find object on stack with class name {}", class_name)));
     }
 
     return Ok(obj);
@@ -571,7 +595,7 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool) -> 
     let mut new_frame : Option<Frame> = None;
     {
         let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
-        debugPrint!(true, 2, "{} {} {} {}", desc, class_name, method_name, descriptor);
+        debugPrint!(true, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
         let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor));
         debugPrint!(debug, 3, "Parsed function with parameters {}", parameters.len());
         let current_op_stack_size = runtime.current_frame.operand_stack.len();
@@ -637,7 +661,8 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
     loop {
         let current_position = buf.position();
         let op_code = try!(buf.read_u8());
-        debugPrint!(false, 3, "Op code {}", op_code);
+        debugPrint!(true, 3, "{} Op code {}", runtime.count, op_code);
+        runtime.count+=1;
         match op_code {
             2...8 => {
                 let val = (op_code as i32) - 3;
@@ -719,6 +744,19 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             84 => try!(astore("BASTORE", runtime, Variable::Byte)),
             85 => try!(astore("CASTORE", runtime, Variable::Char)),
             86 => try!(astore("SASTORE", runtime, Variable::Short)),
+            87 => {
+                let popped = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "POP {}", popped);
+            }
+            88 => {
+                let popped = runtime.current_frame.operand_stack.pop().unwrap();
+                if popped.is_type_1() {
+                    let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+                    debugPrint!(true, 2, "POP2 {} {}", popped, popped2);
+                } else {
+                    debugPrint!(true, 2, "POP2 {}", popped);
+                }
+            }
             89 => {
                 let stack_len = runtime.current_frame.operand_stack.len();
                 let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
@@ -792,7 +830,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 debugPrint!(true, 2, "BRANCH from {} to {}", current_position, new_pos);
                 buf.set_position(new_pos);
             }
-            172 => { return vreturn("IRETURN", runtime, Variable::to_int); }
+            172 => { return vreturn("IRETURN", runtime, Variable::can_convert_to_int); }
             173 => { return vreturn("LRETURN", runtime, Variable::to_long); }
             174 => { return vreturn("FRETURN", runtime, Variable::to_float); }
             175 => { return vreturn("DRETURN", runtime, Variable::to_double); }
@@ -819,11 +857,16 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
-                debugPrint!(true, 2, "GETFIELD {} {} {} {}", class_name, field_name, typ, obj);
-                let super_obj = try!(get_super_obj(obj, class_name));
-                let members = super_obj.members.borrow();
-                let member = try!(members.get(field_name).ok_or(RunnerError::ClassInvalid("Error")));
-                runtime.current_frame.operand_stack.push(member.clone());
+                debugPrint!(true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}'", class_name, field_name, typ, obj);
+                let mut super_obj = try!(get_super_obj(obj, class_name));
+                let mut field : Option<Variable> = None;
+                while {field = super_obj.members.borrow().get(field_name).map(|x| x.clone()); field.is_none() && super_obj.super_class.borrow().is_some()} {
+                    let new_obj = super_obj.super_class.borrow().clone().unwrap();
+                    debugPrint!(true, 4, "Couldn't find field in {}, going to super class {}", super_obj.typeRef.name, new_obj.typeRef.name);
+                    super_obj = new_obj;
+                }
+                let member = try!(field.ok_or(RunnerError::ClassInvalid2(format!("Object of class '{}' doesn't have field '{}'", class_name, field_name))));
+                runtime.current_frame.operand_stack.push(member);
             }
             181 => {
                 let field_index = try!(buf.read_u16::<BigEndian>());
@@ -1207,7 +1250,8 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
             constant_pool: class.constant_pool.clone(),
             operand_stack: Vec::new(),
             local_variables: Vec::new()},
-        classes: HashMap::new()
+        classes: HashMap::new(),
+        count: 0
     };
 
     bootstrap_class_and_dependencies(&mut runtime.classes, String::new().as_str(), class, class_paths);
@@ -1231,7 +1275,8 @@ pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, 
             constant_pool: class.constant_pool.clone(),
             operand_stack: Vec::new(),
             local_variables: Vec::new()},
-        classes: HashMap::new()
+        classes: HashMap::new(),
+        count: 0
     };
 
     bootstrap_class_and_dependencies(&mut runtime.classes, String::new().as_str(), class, class_paths);
