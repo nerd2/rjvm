@@ -148,6 +148,19 @@ impl Variable {
             }
         }
     }
+    pub fn is_ref_or_array(&self) -> bool {
+        match self {
+            &Variable::Reference(ref class, ref obj) => {
+                return true;
+            },
+            &Variable::ArrayReference(ref typee, ref array) => {
+                return true;
+            },
+            _ => {
+                panic!("Couldn't convert to reference or array");
+            }
+        }
+    }
     pub fn to_arrayref(&self) -> (Rc<Variable>, &Option<Rc<RefCell<Vec<Variable>>>>) {
         match self {
             &Variable::ArrayReference(ref typee, ref array) => {
@@ -322,7 +335,7 @@ fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_
     let mut sub_class : Option<Weak<Object>> = None;
 
     while true {
-        debugPrint!(debug, 3, "Constructing object of type {} with subclass {:?}", class.name, sub_class);
+        debugPrint!(debug, 3, "Constructing object of type {} with subclass {}", class.name, sub_class.is_some());
         let mut members: HashMap<String, Variable> = HashMap::new();
         for field in &class.cr.fields {
             if field.access_flags & ACC_STATIC != 0 {
@@ -357,7 +370,7 @@ fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_
 }
 
 fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
-    let debug = true;
+    let debug = false;
     let class_name = try!(get_cp_class(&class.constant_pool, class.this_class_index));
     let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid2(format!("Could not find method {} with descriptor {}", target_method_name, target_descriptor)));
 
@@ -553,18 +566,18 @@ fn invoke_manual(mut runtime: &mut Runtime, obj: Rc<Object>, args: Vec<Variable>
 }
 
 fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool) -> Result<(), RunnerError> {
-    let debug = true;
+    let debug = false;
     let mut code : Option<Code> = None;
     let mut new_frame : Option<Frame> = None;
     {
         let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
         debugPrint!(true, 2, "{} {} {} {}", desc, class_name, method_name, descriptor);
         let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor));
-        debugPrint!(debug, 3, "Parsed function with parameters {:?}", parameters);
+        debugPrint!(debug, 3, "Parsed function with parameters {}", parameters.len());
         let current_op_stack_size = runtime.current_frame.operand_stack.len();
         let extra_parameter = if with_obj {1} else {0};
         let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
-        debugPrint!(debug, 3, "Split off new local variables {:?}", new_local_variables);
+        debugPrint!(debug, 3, "Split off new local variables {}", new_local_variables.len());
         let class = try!(load_class(&mut runtime.classes, class_name, &runtime.class_paths));
         debugPrint!(debug, 3, "Loaded class");
         new_frame = Some(Frame {
@@ -586,7 +599,7 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool) -> 
 fn ifcmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
     where F: Fn(i32) -> bool
 {
-    let current_position = buf.position();
+    let current_position = buf.position() - 1;
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
     let popped = runtime.current_frame.operand_stack.pop().unwrap();
     debugPrint!(true, 2, "{} {} {}", desc, popped, branch_offset);
@@ -602,10 +615,10 @@ fn ifcmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>
 fn icmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
     where F: Fn(i32, i32) -> bool
 {
-    let current_position = buf.position();
+    let current_position = buf.position() - 1;
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
-    let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
     let popped2 = runtime.current_frame.operand_stack.pop().unwrap();
+    let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
     debugPrint!(true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
     if cmp(popped1.to_int(), popped2.to_int()) {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
@@ -643,23 +656,30 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             }
             18 => { // LDC
                 let index = try!(buf.read_u8());
-                debugPrint!(true, 2, "LDC {}", index);
                 let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
                 if maybe_cp_entry.is_none() {
                     debugPrint!(true, 1, "LDC failed at index {}", index);
                     return Err(RunnerError::ClassInvalid("Error"));
                 } else {
-                    match maybe_cp_entry.unwrap() {
-                        ConstantPoolItem::CONSTANT_String { index } => {
+                    match maybe_cp_entry.as_ref().unwrap() {
+                        &ConstantPoolItem::CONSTANT_String { index } => {
+                            let mut arguments : Vec<Variable> = Vec::new();
                             let var = try!(construct_object(&mut runtime.classes, &"java/lang/String", &runtime.class_paths));
-
-                            let arguments = vec!(var.clone(), construct_char_array(try!(get_cp_str(&runtime.current_frame.constant_pool, index))));
+                            {
+                                let str = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                                debugPrint!(true, 2, "LDC string {}", str);
+                                arguments = vec!(var.clone(), construct_char_array(str));
+                            }
                             let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
                             try!(invoke_manual(runtime, obj, arguments, "<init>", "([C)V"));
 
                             runtime.current_frame.operand_stack.push(var);
                         }
-                        _ => return Err(RunnerError::UnknownOpCode(op_code))
+                        &ConstantPoolItem::CONSTANT_Integer { value } => {
+                            debugPrint!(true, 2, "LDC int {}", value as i32);
+                            runtime.current_frame.operand_stack.push(Variable::Int(value as i32));
+                        }
+                        _ => return Err(RunnerError::ClassInvalid2(format!("Unknown constant {:?}", maybe_cp_entry.as_ref().unwrap())))
                     }
                 }
             },
@@ -776,7 +796,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             173 => { return vreturn("LRETURN", runtime, Variable::to_long); }
             174 => { return vreturn("FRETURN", runtime, Variable::to_float); }
             175 => { return vreturn("DRETURN", runtime, Variable::to_double); }
-            176 => { return vreturn("ARETURN", runtime, Variable::to_ref); }
+            176 => { return vreturn("ARETURN", runtime, Variable::is_ref_or_array); }
             177 => { // return
                 debugPrint!(true, 2, "Return");
                 runtime.current_frame = runtime.previous_frames.pop().unwrap();
