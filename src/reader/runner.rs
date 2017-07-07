@@ -335,6 +335,11 @@ fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> 
                 let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
                 return Ok((class_str, name_str, type_str));
             }
+            ConstantPoolItem::CONSTANT_InterfaceMethodref {class_index, name_and_type_index} => {
+                let class_str = try!(get_cp_class(constant_pool, class_index));
+                let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
+                return Ok((class_str, name_str, type_str));
+            }
             _ => {
                 println!("Index {} is not a method", index);
                 return Err(RunnerError::ClassInvalid("Error"));
@@ -931,6 +936,12 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             184 => {
                 let index = try!(buf.read_u16::<BigEndian>());
                 try!(invoke("INVOKESTATIC", runtime, index, false, true));
+            }
+            185 => {
+                let index = try!(buf.read_u16::<BigEndian>());
+                let count = try!(buf.read_u8());
+                let _zero = try!(buf.read_u8());
+                try!(invoke("INVOKEINTERFACE", runtime, index, true, false));
             }
             187 => {
                 let index = try!(buf.read_u16::<BigEndian>());

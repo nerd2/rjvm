@@ -3,6 +3,10 @@ public class inheritance {
         public int f_i();
     }
 
+    private interface J {
+        public int f_j();
+    }
+
     private static class A implements I {
         public int a;
         public int f_a() { return a; }
@@ -15,10 +19,11 @@ public class inheritance {
         public int f_i() { return 2; }
     }
 
-    private static class C extends B {
+    private static class C extends B implements J {
         public int c;
         public int f_c() { return c; }
         public int f_i() { return 3; }
+        public int f_j() { return 4; }
     }
 
     public static int basicImplementation() {
@@ -43,5 +48,18 @@ public class inheritance {
         C c = new C();
         A a = (A)c;
         return a.f_i();
+    }
+
+    private static int runOnI(I i) {
+        return i.f_i();
+    }
+
+    private static int runOnJ(J j) {
+        return j.f_j();
+    }
+
+    public static int extendedMultipleImls() {
+        C c = new C();
+        return (runOnJ(c) << 8) + runOnI(c);
     }
 }

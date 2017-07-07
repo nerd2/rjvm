@@ -57,5 +57,6 @@ mod tests {
         assert_eq!(void_int_call("tests/inheritance.class", "basicImplementationExtension"), 2);
         assert_eq!(void_int_call("tests/inheritance.class", "basicExtension"), 0x3987);
         assert_eq!(void_int_call("tests/inheritance.class", "basicImplementationDowncast"), 3);
+        assert_eq!(void_int_call("tests/inheritance.class", "extendedMultipleImls"), 0x403);
     }
 }
