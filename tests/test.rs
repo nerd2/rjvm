@@ -14,7 +14,9 @@ mod tests {
             Path::new("tests/maths.class"),
             fn_name,
             &args,
-            Some(&transform(0))),
+            Some(&transform(0)),
+            &Vec::new()
+        ),
         transform(-3));
     }
 
@@ -24,7 +26,8 @@ mod tests {
             Path::new("tests/maths.class"),
             fn_name,
             &args,
-            Some(&transform(0))),
+            Some(&transform(0)),
+            &Vec::new()),
         transform(result));
     }
 
@@ -41,6 +44,18 @@ mod tests {
 
     #[test]
     fn string() {
-        assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), Some(&Variable::Char('\0'))), Variable::Char('a'));
+        assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Char('a'));
+    }
+
+    fn void_int_call(path: &str, method: &str) -> i32 {
+        return run_method(Path::new(path), method, &Vec::new(), Some(&Variable::Int(0)), &vec!(String::from("/Users/sam/Personal/rjvm/tests/"))).to_int();
+    }
+
+    #[test]
+    fn inheritance() {
+        assert_eq!(void_int_call("tests/inheritance.class", "basicImplementation"), 1);
+        assert_eq!(void_int_call("tests/inheritance.class", "basicImplementationExtension"), 2);
+        assert_eq!(void_int_call("tests/inheritance.class", "basicExtension"), 0x3987);
+        assert_eq!(void_int_call("tests/inheritance.class", "basicImplementationDowncast"), 3);
     }
 }

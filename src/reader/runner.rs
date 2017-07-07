@@ -394,7 +394,7 @@ fn construct_object(classes: &mut HashMap<String, Rc<Class>>, name: &str, class_
 }
 
 fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
-    let debug = false;
+    let debug = true;
     let class_name = try!(get_cp_class(&class.constant_pool, class.this_class_index));
     let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid2(format!("Could not find method {} with descriptor {}", target_method_name, target_descriptor)));
 
@@ -558,6 +558,19 @@ fn vreturn<F, K>(desc: &str, mut runtime: &mut Runtime, extractor: F) -> Result<
     return Ok(());
 }
 
+// Get the (super)object which contains a field
+fn get_obj_field(mut obj: Rc<Object>, field_name: &str) -> Result<Rc<Object>, RunnerError> {
+    let class_name = obj.typeRef.name.clone();
+    while {let members = obj.members.borrow(); !members.contains_key(field_name) } {
+        let new_obj = obj.super_class.borrow().clone();
+        if new_obj.is_none() {
+            return Err(RunnerError::ClassInvalid2(format!("Couldn't find field {} in class {}", field_name, class_name)));
+        }
+        obj = new_obj.unwrap();
+    }
+    return Ok(obj.clone());
+}
+
 fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, RunnerError> {
     while obj.typeRef.name != class_name && obj.super_class.borrow().is_some() {
         let new_obj = obj.super_class.borrow().clone().unwrap();
@@ -589,29 +602,56 @@ fn invoke_manual(mut runtime: &mut Runtime, obj: Rc<Object>, args: Vec<Variable>
     return Ok(());
 }
 
-fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool) -> Result<(), RunnerError> {
+fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, special: bool) -> Result<(), RunnerError> {
     let debug = false;
     let mut code : Option<Code> = None;
     let mut new_frame : Option<Frame> = None;
+    let current_op_stack_size = runtime.current_frame.operand_stack.len();
+
     {
         let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
-        debugPrint!(true, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
         let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor));
-        debugPrint!(debug, 3, "Parsed function with parameters {}", parameters.len());
-        let current_op_stack_size = runtime.current_frame.operand_stack.len();
         let extra_parameter = if with_obj {1} else {0};
         let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
-        debugPrint!(debug, 3, "Split off new local variables {}", new_local_variables.len());
-        let class = try!(load_class(&mut runtime.classes, class_name, &runtime.class_paths));
-        debugPrint!(debug, 3, "Loaded class");
+
+        let mut class = try!(load_class(&mut runtime.classes, class_name, &runtime.class_paths));
+
+        if with_obj {
+            let mut obj = new_local_variables[0].to_ref().unwrap();
+
+            if special {
+                while obj.typeRef.name != class_name {
+                    let new_obj = obj.super_class.borrow().as_ref().unwrap().clone();
+                    obj = new_obj;
+                }
+            } else {
+                // Virtual: find topmost object
+                while obj.sub_class.borrow().is_some() {
+                    let new_obj = obj.sub_class.borrow().as_ref().unwrap().upgrade().unwrap();
+                    obj = new_obj;
+                }
+            }
+
+            // Find method
+            while { code = get_class_method_code(&obj.typeRef.cr, method_name, descriptor).ok(); code.is_none() } {
+                if obj.super_class.borrow().is_none() {
+                    return Err(RunnerError::ClassInvalid2(format!("Could not find super class of object that matched method {} {}", method_name, descriptor)))
+                }
+                let new_obj = obj.super_class.borrow().clone().unwrap();
+                obj = new_obj;
+            }
+            class = obj.typeRef.clone();
+        } else {
+            code = Some(try!(get_class_method_code(&class.cr, method_name, descriptor)));
+        }
+
+        debugPrint!(true, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
         new_frame = Some(Frame {
             constant_pool: class.cr.constant_pool.clone(),
             operand_stack: Vec::new(),
             local_variables: new_local_variables
         });
 
-        code = Some(try!(get_class_method_code(&class.cr, method_name, descriptor)));
-        debugPrint!(debug, 3, "Found code");
     }
 
     runtime.previous_frames.push(runtime.current_frame.clone());
@@ -664,6 +704,11 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
         debugPrint!(true, 3, "{} Op code {}", runtime.count, op_code);
         runtime.count+=1;
         match op_code {
+            1 => {
+                debugPrint!(true, 2, "ACONST_NULL");
+                // Bit weird, use a random class as the type. Probably need a special case for untyped null?
+                runtime.current_frame.operand_stack.push(Variable::Reference(runtime.classes.values().nth(0).unwrap().clone(), None));
+            }
             2...8 => {
                 let val = (op_code as i32) - 3;
                 debugPrint!(true, 2, "ICONST {}", val);
@@ -859,14 +904,9 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
                 debugPrint!(true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}'", class_name, field_name, typ, obj);
                 let mut super_obj = try!(get_super_obj(obj, class_name));
-                let mut field : Option<Variable> = None;
-                while {field = super_obj.members.borrow().get(field_name).map(|x| x.clone()); field.is_none() && super_obj.super_class.borrow().is_some()} {
-                    let new_obj = super_obj.super_class.borrow().clone().unwrap();
-                    debugPrint!(true, 4, "Couldn't find field in {}, going to super class {}", super_obj.typeRef.name, new_obj.typeRef.name);
-                    super_obj = new_obj;
-                }
-                let member = try!(field.ok_or(RunnerError::ClassInvalid2(format!("Object of class '{}' doesn't have field '{}'", class_name, field_name))));
-                runtime.current_frame.operand_stack.push(member);
+                let mut super_obj_with_field = try!(get_obj_field(super_obj, field_name));
+                let members = super_obj_with_field.members.borrow();
+                runtime.current_frame.operand_stack.push(members.get(field_name).unwrap().clone());
             }
             181 => {
                 let field_index = try!(buf.read_u16::<BigEndian>());
@@ -875,17 +915,22 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
                 debugPrint!(true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj, value);
-                let super_obj = try!(get_super_obj(obj, class_name));
-                let mut members = super_obj.members.borrow_mut();
+                let mut super_obj = try!(get_super_obj(obj, class_name));
+                let mut super_obj_with_field = try!(get_obj_field(super_obj, field_name));
+                let mut members = super_obj_with_field.members.borrow_mut();
                 members.insert(String::from(field_name), value);
             }
-            182 | 183 => {
+            182 => {
                 let index = try!(buf.read_u16::<BigEndian>());
-                try!(invoke("INVOKEVIRTUAL", runtime, index, true));
+                try!(invoke("INVOKEVIRTUAL", runtime, index, true, false));
+            },
+            183 => {
+                let index = try!(buf.read_u16::<BigEndian>());
+                try!(invoke("INVOKESPECIAL", runtime, index, true, true));
             },
             184 => {
                 let index = try!(buf.read_u16::<BigEndian>());
-                try!(invoke("INVOKESTATIC", runtime, index, false));
+                try!(invoke("INVOKESTATIC", runtime, index, false, true));
             }
             187 => {
                 let index = try!(buf.read_u16::<BigEndian>());
@@ -964,7 +1009,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
 }
 
 fn find_class(name: &str, class_paths: &Vec<String>) -> Result<ClassResult, RunnerError> {
-    debugPrint!(true, 4, "Finding class {}", name);
+    debugPrint!(true, 3, "Finding class {}", name);
     for class_path in class_paths.iter() {
         let mut direct_path = class_path.clone();
         direct_path.push_str(name);
@@ -976,7 +1021,7 @@ fn find_class(name: &str, class_paths: &Vec<String>) -> Result<ClassResult, Runn
                 return Ok(maybe_read.unwrap());
             }
         }
-        debugPrint!(true, 4, "Finding class {} direct load failed", name);
+        debugPrint!(true, 3, "Finding class {} direct load failed, searching {}", name, class_path);
 
         // Else try globbing
         let mut glob_path = class_path.clone();
