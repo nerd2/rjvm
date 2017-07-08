@@ -627,11 +627,14 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
         let mut class = try!(load_class(runtime, class_name.as_str()));
 
         if with_obj {
-            let mut obj = new_local_variables[0].to_ref().unwrap();
+            let mut obj = try!(new_local_variables[0].to_ref().ok_or(RunnerError::ClassInvalid2(format!("Missing obj ref on local var stack for method on {}", class_name))));
 
             if special {
                 while obj.typeRef.name != *class_name {
-                    let new_obj = obj.super_class.borrow().as_ref().unwrap().clone();
+                    let new_obj = try!(
+                        obj.super_class.borrow().as_ref()
+                            .ok_or(RunnerError::ClassInvalid2(format!("Couldn't find class {} in tree for {}", class_name, obj.typeRef.name)))
+                    ).clone();
                     obj = new_obj;
                 }
             } else {
@@ -1009,6 +1012,18 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 }
                 runtime.current_frame.operand_stack.push(Variable::ArrayReference(Rc::new(v[0].clone()), Some(Rc::new(RefCell::new(v)))));
             }
+            189 => {
+                let index = try!(buf.read_u16::<BigEndian>());
+                let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
+                let class = runtime.classes.get(&*class_name).unwrap();
+                let count = try!(runtime.current_frame.operand_stack.pop().ok_or(RunnerError::ClassInvalid("Error"))).to_int();
+                debugPrint!(true, 2, "ANEWARRAY {} {}", class_name, count);
+                let mut v : Vec<Variable> = Vec::new();
+                for c in 0..count {
+                    v.push(Variable::Reference(class.clone(), None));
+                }
+                runtime.current_frame.operand_stack.push(Variable::ArrayReference(Rc::new(Variable::Reference(class.clone(), None)), Some(Rc::new(RefCell::new(v)))));
+            }
             190 => {
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 let (typee, array) = var.to_arrayref();
@@ -1129,8 +1144,11 @@ fn bootstrap_class_and_dependencies(mut runtime: &mut Runtime, name: &str, class
         find_unresolved_class_dependencies(&mut runtime.classes, &mut unresolved_classes, &class_result_to_resolve);
     }
 
-    for mut class in classes_to_process {
-        try!(initialise_class(runtime, &class));
+    for class in &classes_to_process {
+        try!(initialise_class_stage_1(runtime, class));
+    }
+    for class in &classes_to_process {
+        try!(initialise_class_stage_2(runtime, class));
     }
     debugPrint!(true, 2, "Bootstrap totally complete on {}", name);
     return Ok(runtime.classes.get(&String::from(name)).unwrap().clone());
@@ -1166,8 +1184,8 @@ fn find_unresolved_class_dependencies(classes: &mut HashMap<String, Rc<Class>>, 
     return Ok(());
 }
 
-fn initialise_class(mut runtime: &mut Runtime, class: &Rc<Class>) -> Result<(), RunnerError> {
-    debugPrint!(true, 2, "Initialising class {}", class.name);
+fn initialise_class_stage_1(mut runtime: &mut Runtime, class: &Rc<Class>) -> Result<(), RunnerError> {
+    debugPrint!(true, 2, "Initialising class stage 1 {}", class.name);
     if *class.initialised.borrow() {
         return Ok(());
     }
@@ -1196,9 +1214,17 @@ fn initialise_class(mut runtime: &mut Runtime, class: &Rc<Class>) -> Result<(), 
             *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid("Error"))).clone());
         }
     }
-    *class.initialised.borrow_mut() = true;
+    return Ok(());
+}
+
+fn initialise_class_stage_2(mut runtime: &mut Runtime, class: &Rc<Class>) -> Result<(), RunnerError> {
+    debugPrint!(true, 2, "Initialising class stage 2 {}", class.name);
+    if *class.initialised.borrow() {
+        return Ok(());
+    }
 
     try!(invoke_manual(runtime, class.clone(), Vec::new(), "<clinit>", "()V", true));
+    *class.initialised.borrow_mut() = true;
 
     return Ok(());
 }
