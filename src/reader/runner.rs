@@ -680,6 +680,20 @@ fn ifcmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>
     return Ok(());
 }
 
+fn branch_if<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, current_position: u64, cmp: F) -> Result<(), RunnerError>
+    where F: Fn(Variable) -> bool
+{
+    let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
+    let var = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{} {} {}", desc, var, branch_offset);
+    if cmp(var) {
+        let new_pos = (current_position as i64 + branch_offset as i64) as u64;
+        debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_pos);
+        buf.set_position(new_pos);
+    }
+    return Ok(());
+}
+
 
 fn icmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
     where F: Fn(i32, i32) -> bool
@@ -1003,17 +1017,8 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 // TODO: Implement monitor
                 debugPrint!(true, 1, "WARNING: MonitorEnter not implemented");
             },
-            199 => {
-                let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
-                let var = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "IFNONNULL {} {}", var, branch_offset);
-                let maybe_obj = try!(get_obj_instance_from_variable(&var));
-                if maybe_obj.is_some() {
-                    let new_pos = (current_position as i64 + branch_offset as i64) as u64;
-                    debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_pos);
-                    buf.set_position(new_pos);
-                }
-            }
+            198 => try!(branch_if("IFNULL", runtime, &mut buf, current_position, |x| x.to_ref().is_none())),
+            199 => try!(branch_if("IFNONNULL", runtime, &mut buf, current_position, |x| x.to_ref().is_some())),
             _ => return Err(RunnerError::UnknownOpCode(op_code))
         }
     }
