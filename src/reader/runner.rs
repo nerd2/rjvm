@@ -800,6 +800,10 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                             debugPrint!(true, 2, "LDC int {}", value as i32);
                             runtime.current_frame.operand_stack.push(Variable::Int(value as i32));
                         }
+                        &ConstantPoolItem::CONSTANT_Float { value } => {
+                            debugPrint!(true, 2, "LDC float {}", value as f32);
+                            runtime.current_frame.operand_stack.push(Variable::Float(value as f32));
+                        }
                         _ => return Err(RunnerError::ClassInvalid2(format!("Unknown constant {:?}", maybe_cp_entry.as_ref().unwrap())))
                     }
                 }
