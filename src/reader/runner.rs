@@ -554,7 +554,7 @@ fn single_pop_instr<F, G, H, I, J>(desc: &str, mut runtime: &mut Runtime, creato
 
 fn vreturn<F, K>(desc: &str, mut runtime: &mut Runtime, extractor: F) -> Result<(), RunnerError> where F: Fn(&Variable) -> K {
     let popped = runtime.current_frame.operand_stack.pop().unwrap();
-    debugPrint!(true, 2, "{} {}", desc, popped);
+    debugPrint!(true, 1, "{} {}", desc, popped);
     extractor(&popped); // Type check
     runtime.current_frame = runtime.previous_frames.pop().unwrap();
     runtime.current_frame.operand_stack.push(popped);
@@ -726,6 +726,28 @@ fn icmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>
     let popped1 = runtime.current_frame.operand_stack.pop().unwrap();
     debugPrint!(true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
     if cmp(popped1.to_int(), popped2.to_int()) {
+        let new_position = (current_position as i64 + branch_offset as i64) as u64;
+        debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
+        buf.set_position(new_position);
+    }
+    return Ok(());
+}
+
+fn rc_ptr_eq<T: ?Sized>(this: Rc<T>, other: Rc<T>) -> bool {
+    let this_ptr: *const T = &*this;
+    let other_ptr: *const T = &*other;
+    this_ptr == other_ptr
+}
+
+fn ifacmp(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, should_match: bool) -> Result<(), RunnerError>
+{
+    let current_position = buf.position() - 1;
+    let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
+    let popped2 = runtime.current_frame.operand_stack.pop().unwrap().to_ref();
+    let popped1 = runtime.current_frame.operand_stack.pop().unwrap().to_ref();
+    debugPrint!(true, 2, "{} {} {} {}", desc, popped1.is_some(), popped2.is_some(), branch_offset);
+    let matching = popped1.is_some() == popped2.is_some() && (popped1.is_none() || rc_ptr_eq(popped1.unwrap(), popped2.unwrap()));
+    if should_match == matching {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
         debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
         buf.set_position(new_position);
@@ -924,6 +946,8 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             162 => try!(icmp("IF_ICMPGE", runtime, &mut buf, |x,y| x >= y)),
             163 => try!(icmp("IF_ICMPGT", runtime, &mut buf, |x,y| x > y)),
             164 => try!(icmp("IF_ICMPLE", runtime, &mut buf, |x,y| x <= y)),
+            165 => try!(ifacmp("IF_ACMPEQ", runtime, &mut buf, true)),
+            166 => try!(ifacmp("IF_ACMPNEQ", runtime, &mut buf, false)),
             167 => {
                 let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
                 let new_pos = (current_position as i64 + branch_offset as i64) as u64;
@@ -936,7 +960,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             175 => { return vreturn("DRETURN", runtime, Variable::to_double); }
             176 => { return vreturn("ARETURN", runtime, Variable::is_ref_or_array); }
             177 => { // return
-                debugPrint!(true, 2, "Return");
+                debugPrint!(true, 1, "RETURN");
                 runtime.current_frame = runtime.previous_frames.pop().unwrap();
                 return Ok(());
             }

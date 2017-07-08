@@ -85,4 +85,26 @@ public final class Class<T> implements Serializable, GenericDeclaration, Type, A
         return false;
     }
 
+    public static Class getPrimitiveClass(String typeName) {
+        if (typeName.equals("byte"))
+            return new Class("byte", false, false, true);
+        if (typeName.equals("short"))
+            return new Class("short", false, false, true);
+        if (typeName.equals("int"))
+            return new Class("int", false, false, true);
+        if (typeName.equals("long"))
+            return new Class("long", false, false, true);
+        if (typeName.equals("char"))
+            return new Class("char", false, false, true);
+        if (typeName.equals("float"))
+            return new Class("float", false, false, true);
+        if (typeName.equals("double"))
+            return new Class("double", false, false, true);
+        if (typeName.equals("boolean"))
+            return new Class("boolean", false, false, true);
+        if (typeName.equals("void"))
+            return new Class("void", false, false, true);
+        throw new IllegalArgumentException("Not primitive type : " + typeName);
+    }
+
 }
