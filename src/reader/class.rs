@@ -12,6 +12,8 @@ use std::io::Read;
 use std::io::BufReader;
 use std::string::FromUtf8Error;
 use std::string::String;
+use std::rc::Rc;
+
 use self::byteorder::{BigEndian, ReadBytesExt};
 
 macro_rules! PRINT_LEVEL { () => {3} }
@@ -30,7 +32,7 @@ pub enum ClassReadError {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ConstantPoolItem {
-    CONSTANT_Utf8(String),
+    CONSTANT_Utf8(Rc<String>),
     CONSTANT_Class{index: u16},
     CONSTANT_Integer{value: u32},
     CONSTANT_Long{value: u64},
@@ -159,14 +161,14 @@ fn read_exception(reader: &mut Read) -> Result<ExceptionItem, ClassReadError> {
     return Ok(ExceptionItem {start_pc: start_pc, end_pc: end_pc, handler_pc: handler_pc, catch_type: catch_type});
 }
 
-pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str, ClassReadError> {
+pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, ClassReadError> {
     let maybe_cp_entry = cp.get(&index);
     if maybe_cp_entry.is_none() {
         return Err(ClassReadError::Parse);
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Utf8(ref s) => {
-                return Ok(&s);
+                return Ok(s.clone());
             }
             _ => {
                 debugPrint!(true, 4, "Constant pool item at index {} is not UTF8, actually {:?}", index, maybe_cp_entry.unwrap());
@@ -176,7 +178,7 @@ pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str
     }
 }
 
-pub fn get_cp_class_name(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<&str, ClassReadError> {
+pub fn get_cp_class_name(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, ClassReadError> {
     let maybe_cp_entry = cp.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 4, "Constant pool item at index {} does not exist", index);
@@ -198,7 +200,7 @@ fn read_attribute(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Res
     let name_index = try!(reader.read_u16::<BigEndian>());
     let length = try!(reader.read_u32::<BigEndian>());
     let attribute_name = try!(get_cp_str(cp, name_index));
-    match attribute_name {
+    match attribute_name.as_str() {
         "ConstantValue" => {
             if length != 2 {
                 return Err(ClassReadError::Parse);
@@ -287,7 +289,7 @@ fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<Consta
             try!(reader.take(length as u64).read_to_end(&mut buf));
             let string = try!(String::from_utf8(buf));
             debugPrint!(debug, 4, "UTF8 {} '{}'", length, string);
-            return Ok(ConstantPoolItem::CONSTANT_Utf8(string));
+            return Ok(ConstantPoolItem::CONSTANT_Utf8(Rc::new(string)));
         },
         3 => {
             // CONSTANT_Integer
@@ -421,8 +423,8 @@ fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, Clas
 
 pub fn get_classname(filename: &Path) -> Result<String, ClassReadError> {
     let (reader, ret) = try!(read_up_to_my_class_details(filename));
-    let class_name = String::from(try!(get_cp_class_name(&ret.constant_pool, ret.this_class_index)));
-    return Ok(class_name);
+    let class_name = try!(get_cp_class_name(&ret.constant_pool, ret.this_class_index));
+    return Ok((*class_name).clone());
 }
 
 pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
