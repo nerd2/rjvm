@@ -399,7 +399,7 @@ fn construct_object(mut runtime: &mut Runtime, name: &str) -> Result<Variable, R
 fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
     let debug = false;
     let class_name = try!(get_cp_class(&class.constant_pool, class.this_class_index));
-    let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid2(format!("Could not find method {} with descriptor {}", target_method_name, target_descriptor)));
+    let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid2(format!("Could not find method {} with descriptor {} in class {}", target_method_name, target_descriptor, class_name)));
 
     for method in &class.methods {
         let method_name = try!(get_cp_str(&class.constant_pool, method.name_index));
@@ -709,6 +709,13 @@ fn branch_if<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec
     return Ok(());
 }
 
+fn make_string(mut runtime: &mut Runtime, val: &Rc<String>) -> Result<Variable, RunnerError> {
+    let var = try!(construct_object(runtime, &"java/lang/String"));
+    let mut arguments = vec!(var.clone(), construct_char_array(val.as_str()));
+    let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
+    try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", "([C)V", false));
+    return Ok(var);
+}
 
 fn icmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
     where F: Fn(i32, i32) -> bool
@@ -767,15 +774,25 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 } else {
                     match maybe_cp_entry.as_ref().unwrap() {
                         &ConstantPoolItem::CONSTANT_String { index } => {
-                            let mut arguments : Vec<Variable> = Vec::new();
-                            let var = try!(construct_object(runtime, &"java/lang/String"));
-                            {
-                                let str = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
-                                debugPrint!(true, 2, "LDC string {}", str);
-                                arguments = vec!(var.clone(), construct_char_array(str.as_str()));
-                            }
+                            let str = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                            debugPrint!(true, 2, "LDC string {}", str);
+                            let var = try!(make_string(runtime, &str));
+                            runtime.current_frame.operand_stack.push(var);
+                        }
+                        &ConstantPoolItem::CONSTANT_Class { index } => {
+                            let var = try!(construct_object(runtime, &"java/lang/Class"));
+                            let class_name = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                            let class = try!(load_class(runtime, class_name.as_str()));
+
+                            debugPrint!(true, 2, "LDC class {}", class_name.as_str());
+                            let mut arguments = vec!(var.clone(),
+                                    try!(make_string(runtime, &class_name)),
+                                    Variable::Boolean(false),
+                                    Variable::Boolean(false),
+                                    Variable::Boolean(false));
                             let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
-                            try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", "([C)V", false));
+                            let method_desc = generate_method_descriptor(&arguments, None, false);
+                            try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", method_desc.as_str(), false));
 
                             runtime.current_frame.operand_stack.push(var);
                         }
@@ -1255,10 +1272,10 @@ fn generate_variable_descriptor(var: &Variable) -> String {
     return ret;
 }
 
-fn generate_method_descriptor(args: &Vec<Variable>, return_type: Option<&Variable>) -> String {
+fn generate_method_descriptor(args: &Vec<Variable>, return_type: Option<&Variable>, is_static: bool) -> String {
     let mut ret = String::new();
     ret.push('(');
-    for arg in args {
+    for arg in args.iter().skip(if is_static {0} else {1}) {
         ret.push_str(generate_variable_descriptor(arg).as_str());
     }
     ret.push(')');
@@ -1411,7 +1428,7 @@ pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, 
         }
     }
 
-    let method_descriptor = generate_method_descriptor(&arguments, return_type);
+    let method_descriptor = generate_method_descriptor(&arguments, return_type, true);
     debugPrint!(true, 1, "Finding method {} with descriptor {}", method, method_descriptor);
     let code = try!(get_class_method_code(class, method, method_descriptor.as_str()));
 
