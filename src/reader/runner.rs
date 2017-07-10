@@ -96,6 +96,12 @@ pub enum Variable {
 impl Variable {
     pub fn to_int(&self) -> i32 {
         match self {
+            &Variable::Char(ref x) => {
+                return *x as i32;
+            },
+            &Variable::Byte(ref x) => {
+                return *x as i32;
+            },
             &Variable::Short(ref x) => {
                 return *x as i32;
             },
@@ -453,7 +459,9 @@ fn load<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<(),
     return Ok(());
 }
 
-fn aload<F>(desc: &str, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
+fn aload<F, G>(desc: &str, mut runtime: &mut Runtime, t: F, converter: G) -> Result<(), RunnerError>
+    where G: Fn(Variable) -> Variable
+{ // TODO: Type checking
     let index = runtime.current_frame.operand_stack.pop().unwrap().to_int();
     let var = runtime.current_frame.operand_stack.pop().unwrap();
     let (array_type, maybe_array) = var.to_arrayref();
@@ -467,7 +475,9 @@ fn aload<F>(desc: &str, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerErr
         return Err(RunnerError::ArrayIndexOutOfBoundsException(array.len(), index as usize));
     }
 
-    runtime.current_frame.operand_stack.push(array[index as usize].clone());
+    let mut item = converter(array[index as usize].clone());
+
+    runtime.current_frame.operand_stack.push(item);
     return Ok(());
 }
 
@@ -840,14 +850,14 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             34...37 => try!(load("FLOAD", op_code - 34, runtime, Variable::Float)),
             38...41 => try!(load("DLOAD", op_code - 38, runtime, Variable::Double)),
             42...45 => try!(load("ALOAD", op_code - 42, runtime, Variable::Reference)),
-            46 => try!(aload("IALOAD", runtime, Variable::Int)),
-            47 => try!(aload("LALOAD", runtime, Variable::Long)),
-            48 => try!(aload("FALOAD", runtime, Variable::Float)),
-            49 => try!(aload("DALOAD", runtime, Variable::Double)),
-            50 => try!(aload("AALOAD", runtime, Variable::Reference)),
-            51 => try!(aload("BALOAD", runtime, Variable::Byte)),
-            52 => try!(aload("CALOAD", runtime, Variable::Char)),
-            53 => try!(aload("SALOAD", runtime, Variable::Short)),
+            46 => try!(aload("IALOAD", runtime, Variable::Int, |x| x)),
+            47 => try!(aload("LALOAD", runtime, Variable::Long, |x| x)),
+            48 => try!(aload("FALOAD", runtime, Variable::Float, |x| x)),
+            49 => try!(aload("DALOAD", runtime, Variable::Double, |x| x)),
+            50 => try!(aload("AALOAD", runtime, Variable::Reference, |x| x)),
+            51 => try!(aload("BALOAD", runtime, Variable::Byte, |x| x)),
+            52 => try!(aload("CALOAD", runtime, Variable::Char, |x| Variable::Int(Variable::to_int(&x)))),
+            53 => try!(aload("SALOAD", runtime, Variable::Short, |x| x)),
             54 => try!(store("ISTORE", try!(buf.read_u8()), runtime, Variable::Int)),
             55 => try!(store("LSTORE", try!(buf.read_u8()), runtime, Variable::Long)),
             56 => try!(store("FSTORE", try!(buf.read_u8()), runtime, Variable::Float)),
@@ -928,6 +938,11 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 let old_val = runtime.current_frame.local_variables[index as usize].to_int();
                 runtime.current_frame.local_variables[index as usize] = Variable::Int(old_val + constt as i32);
             }
+            133 => {
+                let popped = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "I2L {}", popped);
+                runtime.current_frame.operand_stack.push(Variable::Long(popped.to_int() as i64));
+            }
             136 => single_pop_instr("L2I", runtime, Variable::Int, Variable::to_long, |x| x as i32),
             147 => {
                 let popped = runtime.current_frame.operand_stack.pop().unwrap();
@@ -940,7 +955,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
             156 => try!(ifcmp("IFGE", runtime, &mut buf, |x| x >= 0)),
             157 => try!(ifcmp("IFGT", runtime, &mut buf, |x| x > 0)),
             158 => try!(ifcmp("IFLE", runtime, &mut buf, |x| x <= 0)),
-            159 => try!(ifcmp("IFEQ", runtime, &mut buf, |x| x == 0)),
+            159 => try!(icmp("IF_ICMPEQ", runtime, &mut buf, |x,y| x == y)),
             160 => try!(icmp("IF_ICMPNE", runtime, &mut buf, |x,y| x != y)),
             161 => try!(icmp("IF_ICMPLT", runtime, &mut buf, |x,y| x < y)),
             162 => try!(icmp("IF_ICMPGE", runtime, &mut buf, |x,y| x >= y)),
@@ -1093,6 +1108,35 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                     // TODO: CHECKCAST (noop)
                     runtime.current_frame.operand_stack.push(var);
                 }
+            }
+            193 => {
+                let var = runtime.current_frame.operand_stack.pop().unwrap();
+                let index = try!(buf.read_u16::<BigEndian>());
+                let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
+
+                debugPrint!(true, 2, "INSTANCEOF {} {}", var, class_name);
+
+                let var_ref = var.to_ref();
+                let mut matches = false;
+                if var_ref.is_some() {
+                    let mut obj = var_ref.unwrap();
+
+                    // Go to top of chain
+                    while obj.sub_class.borrow().is_some() {
+                        let new_obj = obj.sub_class.borrow().as_ref().unwrap().upgrade().unwrap();
+                        obj = new_obj;
+                    }
+
+                    // Search down to find if instance of
+                    while {matches = obj.typeRef.name == *class_name; obj.super_class.borrow().is_some()} {
+                        if matches {
+                            break;
+                        }
+                        let new_obj = obj.super_class.borrow().as_ref().unwrap().clone();
+                        obj = new_obj;
+                    }
+                }
+                runtime.current_frame.operand_stack.push(Variable::Int(if matches {1} else {0}));
             }
             194 => {
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
