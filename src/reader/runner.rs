@@ -421,7 +421,7 @@ fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_d
     let method = try!(method_res);
     debugPrint!(debug, 3, "Found method");
     if (method.access_flags & ACC_NATIVE) != 0 {
-        return Err(RunnerError::NativeMethod(format!("Method '{}' in class '{}'", target_method_name, class_name)));
+        return Err(RunnerError::NativeMethod(format!("Method '{}' descriptor '{}' in class '{}'", target_method_name, target_descriptor, class_name)));
     } else {
         let code = try!(method.attributes.iter().filter_map(|x|
             match x {
@@ -620,6 +620,14 @@ fn invoke_manual(mut runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable
     return Ok(());
 }
 
+fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, mut runtime: &mut Runtime) -> Result<bool, RunnerError> {
+    match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
+        ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
+        _ => return Ok(false)
+    };
+}
+
+
 fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, special: bool) -> Result<(), RunnerError> {
     let debug = false;
     let mut code : Option<Code> = None;
@@ -633,6 +641,10 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
         let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
 
         debugPrint!(true, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
+
+        if try!(try_builtin(&class_name, &method_name, &descriptor, runtime)) {
+            return Ok(());
+        }
 
         let mut class = try!(load_class(runtime, class_name.as_str()));
 
@@ -665,14 +677,6 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
             }
             class = obj.typeRef.clone();
         } else {
-            let maybe_code = get_class_method_code(&class.cr, method_name.as_str(), descriptor.as_str());
-            if maybe_code.is_err() {
-                let x = maybe_code.err().unwrap();
-                match x {
-                    RunnerError::NativeMethod(ref s) => {println!("WARNING: ignoring native method {}", method_name); return Ok(()); }
-                    _ => {return Err(x);}
-                }
-            }
             code = Some(try!(get_class_method_code(&class.cr, method_name.as_str(), descriptor.as_str())));
         }
 
@@ -1482,7 +1486,7 @@ pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, 
         count: 0
     };
 
-    bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class);
+    try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
 
     for arg in arguments {
         match arg {
