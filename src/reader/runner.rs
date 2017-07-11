@@ -5,6 +5,8 @@ use std;
 use std::fmt;
 use std::io;
 use std::io::Cursor;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::ops::Add;
 use std::ops::Sub;
 use std::ops::Mul;
@@ -93,6 +95,7 @@ pub enum Variable {
     InterfaceReference(Rc<Object>),
     UnresolvedReference(String),
 }
+
 impl Variable {
     pub fn to_int(&self) -> i32 {
         match self {
@@ -351,6 +354,15 @@ fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> 
             }
         }
     }
+}
+
+fn get_most_sub_class(mut obj: Rc<Object>) -> Rc<Object>{
+    // Go to top of chain
+    while obj.sub_class.borrow().is_some() {
+        let new_obj = obj.sub_class.borrow().as_ref().unwrap().upgrade().unwrap();
+        obj = new_obj;
+    }
+    return obj;
 }
 
 fn initialise_variable(classes: &HashMap<String, Rc<Class>>, descriptor_string: &str) -> Result<Variable, RunnerError> {
@@ -616,6 +628,39 @@ fn invoke_manual(mut runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable
     return Ok(());
 }
 
+fn hash_var<H>(var: &Variable, state: &mut H) where H: Hasher {
+    match var {
+        &Variable::Boolean(ref x) => {x.hash(state);}
+        &Variable::Byte(ref x) => {x.hash(state);}
+        &Variable::Char(ref x) => {x.hash(state);}
+        &Variable::Short(ref x) => {x.hash(state);}
+        &Variable::Int(ref x) => {x.hash(state);}
+        &Variable::Long(ref x) => {x.hash(state);}
+        &Variable::Float(ref x) => { unsafe {std::mem::transmute::<f32, u32>(*x)}.hash(state);}
+        &Variable::Double(ref x) => { unsafe {std::mem::transmute::<f64, u64>(*x)}.hash(state);}
+        &Variable::Reference(ref _class, ref obj) => { obj.as_ref().map(|x| hash_obj(x.clone(), state)); }
+        &Variable::ArrayReference(ref _type, ref array) => {
+            array.as_ref().map(|x| for y in x.borrow().iter() { hash_var(y, state); });
+        }
+        &Variable::InterfaceReference(ref x) => { hash_obj(x.clone(), state); }
+        &Variable::UnresolvedReference(ref x) => { x.hash(state); }
+    }
+}
+
+fn hash_obj<H>(obj: Rc<Object>, state: &mut H) where H: Hasher {
+    let mut mobj = Some(get_most_sub_class(obj));
+    while mobj.is_some() {
+        let aobj = mobj.unwrap();
+        let members = aobj.members.borrow();
+        for (key, value) in members.iter() {
+            hash_var(value, state);
+        }
+
+        let new_obj = aobj.super_class.borrow().clone();
+        mobj = new_obj;
+    }
+}
+
 fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, mut runtime: &mut Runtime) -> Result<bool, RunnerError> {
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
@@ -653,15 +698,37 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             try!(invoke_manual(runtime, action.typeRef.clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
             return Ok(true)
         },
+        ("java/lang/Object", "hashCode", "()I") => {
+            let obj = args[0].clone().to_ref().unwrap();
+            let mut s = DefaultHasher::new();
+            hash_obj(obj, &mut s);
+            let hash = s.finish();
+            debugPrint!(true, 2, "BUILTIN: hashcode {}", hash);
+            runtime.current_frame.operand_stack.push(Variable::Int(hash as i32));
+            return Ok(true)
+        },
+        ("java/lang/ClassLoader", "registerNatives", "()V") => {return Ok(true)},
+        ("java/lang/Thread", "registerNatives", "()V") => {return Ok(true)},
         ("java/lang/Thread", "currentThread", "()Ljava/lang/Thread;") => {
             debugPrint!(true, 2, "BUILTIN: currentThread");
             if runtime.current_thread.is_none() {
                 debugPrint!(true, 2, "BUILTIN: currentThread - creating thread");
-                let var = try!(construct_object(runtime, &"java/lang/Thread"));
-                let mut arguments = vec!(var.clone());
-                let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
-                try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", "()V", false));
-                runtime.current_thread = Some(var);
+                let thread_group;
+                {
+                    let var = try!(construct_object(runtime, &"java/lang/ThreadGroup"));
+                    let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
+                    try!(invoke_manual(runtime, obj.typeRef.clone(), vec!(var.clone()), "<init>", "()V", false));
+                    thread_group = var.clone();
+                }
+
+                {
+                    let var = try!(construct_object(runtime, &"java/lang/Thread"));
+
+                    runtime.current_thread = Some(var.clone());
+                    let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
+                    put_field(obj.clone(), &"java/lang/Thread", &"name", try!(make_string(runtime, &"thread")));
+                    put_field(obj.clone(), &"java/lang/Thread", &"group", thread_group);
+                }
             }
             runtime.current_frame.operand_stack.push(runtime.current_thread.as_ref().unwrap().clone());
             return Ok(true)
@@ -705,11 +772,7 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
                     obj = new_obj;
                 }
             } else {
-                // Virtual: find topmost object
-                while obj.sub_class.borrow().is_some() {
-                    let new_obj = obj.sub_class.borrow().as_ref().unwrap().upgrade().unwrap();
-                    obj = new_obj;
-                }
+                obj = get_most_sub_class(obj);
             }
 
             // Find method
@@ -768,12 +831,20 @@ fn branch_if<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec
     return Ok(());
 }
 
-fn make_string(mut runtime: &mut Runtime, val: &Rc<String>) -> Result<Variable, RunnerError> {
+fn make_string(mut runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerError> {
     let var = try!(construct_object(runtime, &"java/lang/String"));
-    let mut arguments = vec!(var.clone(), construct_char_array(val.as_str()));
+    let mut arguments = vec!(var.clone(), construct_char_array(val));
     let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
     try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", "([C)V", false));
     return Ok(var);
+}
+
+fn put_field(obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    let mut super_obj = try!(get_super_obj(obj, class_name));
+    let mut super_obj_with_field = try!(get_obj_field(super_obj, field_name));
+    let mut members = super_obj_with_field.members.borrow_mut();
+    members.insert(String::from(field_name), value);
+    return Ok(());
 }
 
 fn icmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
@@ -862,7 +933,7 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                         &ConstantPoolItem::CONSTANT_String { index } => {
                             let str = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
                             debugPrint!(true, 2, "LDC string {}", str);
-                            let var = try!(make_string(runtime, &str));
+                            let var = try!(make_string(runtime, str.as_str()));
                             runtime.current_frame.operand_stack.push(var);
                         }
                         &ConstantPoolItem::CONSTANT_Class { index } => {
@@ -872,7 +943,7 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
 
                             debugPrint!(true, 2, "LDC class {}", class_name.as_str());
                             let mut arguments = vec!(var.clone(),
-                                    try!(make_string(runtime, &class_name)),
+                                    try!(make_string(runtime, class_name.as_str())),
                                     Variable::Boolean(false),
                                     Variable::Boolean(false),
                                     Variable::Boolean(false));
@@ -1095,10 +1166,7 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
                 debugPrint!(true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj, value);
-                let mut super_obj = try!(get_super_obj(obj, class_name.as_str()));
-                let mut super_obj_with_field = try!(get_obj_field(super_obj, field_name.as_str()));
-                let mut members = super_obj_with_field.members.borrow_mut();
-                members.insert((*field_name).clone(), value);
+                try!(put_field(obj, class_name.as_str(), field_name.as_str(), value));
             }
             182 => {
                 let index = try!(buf.read_u16::<BigEndian>());
@@ -1193,13 +1261,7 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 let var_ref = var.to_ref();
                 let mut matches = false;
                 if var_ref.is_some() {
-                    let mut obj = var_ref.unwrap();
-
-                    // Go to top of chain
-                    while obj.sub_class.borrow().is_some() {
-                        let new_obj = obj.sub_class.borrow().as_ref().unwrap().upgrade().unwrap();
-                        obj = new_obj;
-                    }
+                    let mut obj = get_most_sub_class(var_ref.unwrap());
 
                     // Search down to find if instance of
                     while {matches = obj.typeRef.name == *class_name; obj.super_class.borrow().is_some()} {
