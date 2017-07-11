@@ -226,7 +226,8 @@ struct Runtime {
     current_frame: Frame,
     class_paths: Vec<String>,
     classes: HashMap<String, Rc<Class>>,
-    count: i64
+    count: i64,
+    current_thread: Option<Variable>
 }
 
 fn last_mut(v : &mut Vec<Frame>) -> &mut Frame {
@@ -655,6 +656,19 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let action = args[0].clone().to_ref().unwrap();
             debugPrint!(true, 2, "BUILTIN: doPrivileged {}", action);
             try!(invoke_manual(runtime, action.typeRef.clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
+            return Ok(true)
+        },
+        ("java/lang/Thread", "currentThread", "()Ljava/lang/Thread;") => {
+            debugPrint!(true, 2, "BUILTIN: currentThread");
+            if runtime.current_thread.is_none() {
+                debugPrint!(true, 2, "BUILTIN: currentThread - creating thread");
+                let var = try!(construct_object(runtime, &"java/lang/Thread"));
+                let mut arguments = vec!(var.clone());
+                let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
+                try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", "()V", false));
+                runtime.current_thread = Some(var);
+            }
+            runtime.current_frame.operand_stack.push(runtime.current_thread.as_ref().unwrap().clone());
             return Ok(true)
         }
         _ => return Ok(false)
@@ -1521,7 +1535,8 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
             operand_stack: Vec::new(),
             local_variables: Vec::new()},
         classes: HashMap::new(),
-        count: 0
+        count: 0,
+        current_thread: None
     };
 
     bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class);
@@ -1546,7 +1561,8 @@ pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, 
             operand_stack: Vec::new(),
             local_variables: Vec::new()},
         classes: HashMap::new(),
-        count: 0
+        count: 0,
+        current_thread: None
     };
 
     try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
