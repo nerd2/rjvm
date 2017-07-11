@@ -629,6 +629,33 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             debugPrint!(true, 2, "BUILTIN: floatToRawIntBits {} {}", float, bits);
             runtime.current_frame.operand_stack.push(Variable::Int(bits as i32));
             return Ok(true)
+        },
+        ("java/lang/Float", "intBitsToFloat", "(I)F") => {
+            let int = args[0].to_int();
+            let float = unsafe {std::mem::transmute::<i32, f32>(int)};
+            debugPrint!(true, 2, "BUILTIN: intBitsToFloat {} {}", int, float);
+            runtime.current_frame.operand_stack.push(Variable::Float(float));
+            return Ok(true)
+        },
+        ("java/lang/Double", "doubleToRawLongBits", "(D)J") => {
+            let double = args[0].to_double();
+            let bits = unsafe {std::mem::transmute::<f64, u64>(double)};
+            debugPrint!(true, 2, "BUILTIN: doubleToRawIntBits {} {}", double, bits);
+            runtime.current_frame.operand_stack.push(Variable::Long(bits as i64));
+            return Ok(true)
+        },
+        ("java/lang/Double", "longBitsToDouble", "(J)D") => {
+            let long = args[0].to_long();
+            let double = unsafe {std::mem::transmute::<i64, f64>(long)};
+            debugPrint!(true, 2, "BUILTIN: doubleToRawIntBits {} {}", long, double);
+            runtime.current_frame.operand_stack.push(Variable::Double(double));
+            return Ok(true)
+        },
+        ("java/security/AccessController", "doPrivileged", "(Ljava/security/PrivilegedAction;)Ljava/lang/Object;") => {
+            let action = args[0].clone().to_ref().unwrap();
+            debugPrint!(true, 2, "BUILTIN: doPrivileged {}", action);
+            try!(invoke_manual(runtime, action.typeRef.clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
+            return Ok(true)
         }
         _ => return Ok(false)
     };
