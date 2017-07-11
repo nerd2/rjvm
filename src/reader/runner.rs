@@ -851,6 +851,26 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                     }
                 }
             },
+            20 => { // LDC2W
+                let index = try!(buf.read_u16::<BigEndian>());
+                let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
+                if maybe_cp_entry.is_none() {
+                    debugPrint!(true, 1, "LDC2W failed at index {}", index);
+                    return Err(RunnerError::ClassInvalid("Error"));
+                } else {
+                    match maybe_cp_entry.as_ref().unwrap() {
+                        &ConstantPoolItem::CONSTANT_Long { value } => {
+                            debugPrint!(true, 2, "LDC2W long {}", value);
+                            runtime.current_frame.operand_stack.push(Variable::Long(value as i64));
+                        }
+                        &ConstantPoolItem::CONSTANT_Double { value } => {
+                            debugPrint!(true, 2, "LDC2W double {}", value);
+                            runtime.current_frame.operand_stack.push(Variable::Double(value));
+                        }
+                        _ => return Err(RunnerError::ClassInvalid2(format!("Invalid constant for LDC2W {:?}", maybe_cp_entry.as_ref().unwrap())))
+                    }
+                }
+            },
             21 => try!(load("ILOAD", try!(buf.read_u8()), runtime, Variable::Int)),
             22 => try!(load("LLOAD", try!(buf.read_u8()), runtime, Variable::Long)),
             23 => try!(load("FLOAD", try!(buf.read_u8()), runtime, Variable::Float)),
