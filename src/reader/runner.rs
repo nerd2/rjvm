@@ -836,6 +836,11 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 debugPrint!(true, 2, "ICONST {}", val);
                 runtime.current_frame.operand_stack.push(Variable::Int(val));
             }
+            9...10 => {
+                let val = (op_code as i64) - 9;
+                debugPrint!(true, 2, "LCONST {}", val);
+                runtime.current_frame.operand_stack.push(Variable::Long(val));
+            }
             16 => {
                 let byte = try!(buf.read_u8()) as i32;
                 debugPrint!(true, 2, "BIPUSH {}", byte);
