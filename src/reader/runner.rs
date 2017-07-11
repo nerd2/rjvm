@@ -615,7 +615,7 @@ fn invoke_manual(mut runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable
     debugPrint!(true, 3, "Invoking manually {} {} on {}", method_name, method_descriptor, class.name);
     runtime.previous_frames.push(runtime.current_frame.clone());
     runtime.current_frame = new_frame;
-    try!(do_run_method(&mut runtime, &code, 0));
+    try!(do_run_method((class.name.clone() + method_name).as_str(), &mut runtime, &code, 0));
 
     return Ok(());
 }
@@ -666,10 +666,12 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
     let debug = false;
     let mut code : Option<Code> = None;
     let mut new_frame : Option<Frame> = None;
+    let mut new_method_name : Option<String> = None;
     let current_op_stack_size = runtime.current_frame.operand_stack.len();
 
     {
         let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
+        new_method_name = Some((*class_name).clone() + "/" + method_name.as_str());
         let (parameters, return_type) = try!(parse_function_type_string(&runtime.classes, descriptor.as_str()));
         let extra_parameter = if with_obj {1} else {0};
         let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
@@ -724,7 +726,7 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
 
     runtime.previous_frames.push(runtime.current_frame.clone());
     runtime.current_frame = new_frame.unwrap();
-    try!(do_run_method(&mut runtime, &code.unwrap(), 0));
+    try!(do_run_method(new_method_name.unwrap().as_str(), &mut runtime, &code.unwrap(), 0));
     return Ok(());
 }
 
@@ -803,7 +805,7 @@ fn ifacmp(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>,
     return Ok(());
 }
 
-fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
+fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
     if pc as usize > code.code.len() {
         return Err(RunnerError::InvalidPc);
     }
@@ -812,7 +814,7 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
     loop {
         let current_position = buf.position();
         let op_code = try!(buf.read_u8());
-        debugPrint!(true, 3, "{} Op code {}", runtime.count, op_code);
+        debugPrint!(true, 3, "{} {} Op code {}", name, runtime.count, op_code);
         runtime.count+=1;
         match op_code {
             1 => {
@@ -1526,7 +1528,7 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
 
     let main_code = try!(get_class_method_code(class, &"main", &"([Ljava/lang/String;)V"));
 
-    try!(do_run_method(&mut runtime, &main_code, 0));
+    try!(do_run_method("main", &mut runtime, &main_code, 0));
 
     return Ok(());
 }
@@ -1570,7 +1572,7 @@ pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, 
     let code = try!(get_class_method_code(class, method, method_descriptor.as_str()));
 
     println!("Running method");
-    try!(do_run_method(&mut runtime, &code, 0));
+    try!(do_run_method(method, &mut runtime, &code, 0));
 
     return Ok(runtime.current_frame.operand_stack.pop().unwrap().clone());
 }
