@@ -485,15 +485,10 @@ fn aload<F, G>(desc: &str, mut runtime: &mut Runtime, t: F, converter: G) -> Res
 fn store<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
     let popped = runtime.current_frame.operand_stack.pop().unwrap();
     debugPrint!(true, 2, "{}_{} {}", desc, index, popped);
-    let local_len = runtime.current_frame.local_variables.len();
-    if local_len > index as usize {
-        runtime.current_frame.local_variables[index as usize] = popped;
-    } else if local_len == index as usize {
-        runtime.current_frame.local_variables.push(popped);
-    } else {
-        debugPrint!(true, 1, "Asked to store into local variables at index {} when current size is only {}", index, local_len);
-        return Err(RunnerError::InvalidPc);
+    while runtime.current_frame.local_variables.len() <= index as usize {
+        runtime.current_frame.local_variables.push(Variable::Int(0));
     }
+    runtime.current_frame.local_variables[index as usize] = popped;
     return Ok(());
 }
 
