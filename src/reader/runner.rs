@@ -1203,6 +1203,13 @@ fn do_run_method(mut runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), 
                 // TODO: Implement monitor
                 debugPrint!(true, 1, "WARNING: MonitorEnter not implemented");
             },
+            195 => {
+                let var = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "MONITOREXIT {}", var);
+                let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
+                // TODO: Implement monitor
+                debugPrint!(true, 1, "WARNING: MonitorExit not implemented");
+            },
             198 => try!(branch_if("IFNULL", runtime, &mut buf, current_position, |x| x.to_ref().is_none())),
             199 => try!(branch_if("IFNONNULL", runtime, &mut buf, current_position, |x| x.to_ref().is_some())),
             _ => return Err(RunnerError::UnknownOpCode(op_code))
