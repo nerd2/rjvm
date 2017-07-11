@@ -620,9 +620,16 @@ fn invoke_manual(mut runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable
     return Ok(());
 }
 
-fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, mut runtime: &mut Runtime) -> Result<bool, RunnerError> {
+fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, mut runtime: &mut Runtime) -> Result<bool, RunnerError> {
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
+        ("java/lang/Float", "floatToRawIntBits", "(F)I") => {
+            let float = args[0].to_float();
+            let bits = unsafe {std::mem::transmute::<f32, u32>(float)};
+            debugPrint!(true, 2, "BUILTIN: floatToRawIntBits {} {}", float, bits);
+            runtime.current_frame.operand_stack.push(Variable::Int(bits as i32));
+            return Ok(true)
+        }
         _ => return Ok(false)
     };
 }
@@ -642,7 +649,7 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
 
         debugPrint!(true, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
 
-        if try!(try_builtin(&class_name, &method_name, &descriptor, runtime)) {
+        if try!(try_builtin(&class_name, &method_name, &descriptor, &new_local_variables, runtime)) {
             return Ok(());
         }
 
