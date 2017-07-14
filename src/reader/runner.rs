@@ -1040,6 +1040,18 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 debugPrint!(true, 2, "DUP {}", peek);
                 runtime.current_frame.operand_stack.push(peek);
             }
+            90 => {
+                let stack_len = runtime.current_frame.operand_stack.len();
+                let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
+                debugPrint!(true, 2, "DUP_X1 {}", peek);
+                runtime.current_frame.operand_stack.insert(stack_len - 2, peek);
+            }
+            91 => {
+                let stack_len = runtime.current_frame.operand_stack.len();
+                let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
+                debugPrint!(true, 2, "DUP_X2 {}", peek);
+                runtime.current_frame.operand_stack.insert(stack_len - 3, peek);
+            }
             96 => maths_instr("IADD", runtime, Variable::Int, Variable::to_int, add),
             97 => maths_instr("LADD", runtime, Variable::Long, Variable::to_long, add),
             98 => maths_instr("FADD", runtime, Variable::Float, Variable::to_float, add),
