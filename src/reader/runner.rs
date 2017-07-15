@@ -97,6 +97,16 @@ pub enum Variable {
 }
 
 impl Variable {
+    pub fn to_char(&self) -> char {
+        match self {
+            &Variable::Char(ref x) => {
+                return *x;
+            },
+            _ => {
+                panic!("Couldn't convert to char");
+            }
+        }
+    }
     pub fn to_int(&self) -> i32 {
         match self {
             &Variable::Char(ref x) => {
@@ -170,6 +180,19 @@ impl Variable {
             }
         }
     }
+    pub fn is_null(&self) -> bool {
+        match self {
+            &Variable::Reference(ref class, ref obj) => {
+                return obj.is_none();
+            },
+            &Variable::ArrayReference(ref typee, ref array) => {
+                return array.is_none();
+            },
+            _ => {
+                panic!("Couldn't check if primitive '{}' is null", self);
+            }
+        }
+    }
     pub fn to_arrayref(&self) -> (Rc<Variable>, &Option<Rc<RefCell<Vec<Variable>>>>) {
         match self {
             &Variable::ArrayReference(ref typee, ref array) => {
@@ -210,12 +233,22 @@ impl fmt::Display for Variable {
              &Variable::Reference(ref class, ref maybe_ref) => {
                  write!(f, "Reference ({} {})", class.name, maybe_ref.is_some())
              },
+             &Variable::ArrayReference(ref vtype, ref maybe_ref) => {
+                 if maybe_ref.is_some() {
+                     write!(f, "ArrayReference ({})",
+                            maybe_ref.as_ref().unwrap().borrow().iter()
+                                .map(|y| format!("{}", y))
+                                .fold(String::new(), |a, b| (a + ", " + b.as_str())))
+                 } else {
+                     write!(f, "ArrayReference (None)")
+                 }
+             },
              _ => {
                  write!(f, "{:?}", self)
              }
          }
      }
- }
+}
 
 #[derive(Clone, Debug)]
 struct Frame {
@@ -230,7 +263,29 @@ struct Runtime {
     class_paths: Vec<String>,
     classes: HashMap<String, Rc<Class>>,
     count: i64,
-    current_thread: Option<Variable>
+    current_thread: Option<Variable>,
+    string_interns: HashMap<String, Variable>,
+    properties: HashMap<String, Variable>,
+}
+impl Runtime {
+    fn  new(class_paths: Vec<String>, constant_pool: HashMap<u16, ConstantPoolItem>) -> Runtime {
+        return Runtime {
+            class_paths: class_paths,
+            previous_frames: vec!(Frame {
+                constant_pool: HashMap::new(),
+                operand_stack: Vec::new(),
+                local_variables: Vec::new()}),
+            current_frame: Frame {
+                constant_pool: constant_pool,
+                operand_stack: Vec::new(),
+                local_variables: Vec::new()},
+            classes: HashMap::new(),
+            count: 0,
+            current_thread: None,
+            string_interns: HashMap::new(),
+            properties: HashMap::new()
+        };
+    }
 }
 
 fn last_mut(v : &mut Vec<Frame>) -> &mut Frame {
@@ -457,6 +512,15 @@ fn get_obj_instance_from_variable(var: &Variable) -> Result<Option<Rc<Object>>, 
     }
 }
 
+fn extract_from_char_array(var: &Variable) -> String {
+    let (clazz, array) = var.to_arrayref();
+    let mut res = String::new();
+    for c in array.as_ref().unwrap().borrow().iter() {
+        res.push(c.to_char());
+    }
+    return res;
+}
+
 fn construct_char_array(s: &str) -> Variable {
     let mut v : Vec<Variable> = Vec::new();
     for c in s.chars() {
@@ -478,7 +542,7 @@ fn aload<F, G>(desc: &str, mut runtime: &mut Runtime, t: F, converter: G) -> Res
     let index = runtime.current_frame.operand_stack.pop().unwrap().to_int();
     let var = runtime.current_frame.operand_stack.pop().unwrap();
     let (array_type, maybe_array) = var.to_arrayref();
-    debugPrint!(true, 2, "{} {} {:?}", desc, index, maybe_array);
+    debugPrint!(true, 2, "{} {} {}", desc, index, var);
     if maybe_array.is_none() {
         return Err(RunnerError::NullPointerException);
     }
@@ -505,12 +569,14 @@ fn store<F>(desc: &str, index: u8, mut runtime: &mut Runtime, t: F) -> Result<()
 }
 
 
-fn astore<F>(desc: &str, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerError> { // TODO: Type checking
+fn astore<F>(desc: &str, mut runtime: &mut Runtime, converter: F) -> Result<(), RunnerError>
+    where F: Fn(&Variable) -> Variable
+{ // TODO: Type checking
     let value = runtime.current_frame.operand_stack.pop().unwrap();
     let index = runtime.current_frame.operand_stack.pop().unwrap().to_int();
     let var = runtime.current_frame.operand_stack.pop().unwrap();
     let (array_type, maybe_array) = var.to_arrayref();
-    debugPrint!(true, 2, "{} {} {:?}", desc, index, maybe_array);
+    debugPrint!(true, 2, "{} {} {}", desc, index, var);
     if maybe_array.is_none() {
         return Err(RunnerError::NullPointerException);
     }
@@ -520,7 +586,7 @@ fn astore<F>(desc: &str, mut runtime: &mut Runtime, t: F) -> Result<(), RunnerEr
         return Err(RunnerError::ArrayIndexOutOfBoundsException(array.len(), index as usize));
     }
 
-    array[index as usize] = value;
+    array[index as usize] = converter(&value);
     return Ok(());
 }
 
@@ -663,7 +729,40 @@ fn hash_obj<H>(obj: Rc<Object>, state: &mut H) where H: Hasher {
 
 fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, mut runtime: &mut Runtime) -> Result<bool, RunnerError> {
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
+        ("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;") => {
+            let obj = args[0].clone().to_ref().unwrap();
+            let value = try!(get_field(obj, "java/lang/String", "value"));
+            let string = extract_from_char_array(&value);
+            if runtime.properties.contains_key(&string) {
+                debugPrint!(true, 2, "BUILTIN: getProperty {} valid", string);
+                runtime.current_frame.operand_stack.push(runtime.properties.get(&string).unwrap().clone());
+            } else {
+                debugPrint!(true, 2, "BUILTIN: getProperty {} NULL", string);
+                let null_string = Variable::Reference(try!(load_class(runtime, "java/lang/String")), None);
+                runtime.current_frame.operand_stack.push(null_string);
+            }
+            return Ok(true);
+        },
+        ("java/lang/Runtime", "availableProcessors", "()I") => {
+            debugPrint!(true, 2, "BUILTIN: availableProcessors");
+            runtime.current_frame.operand_stack.push(Variable::Int(1));
+            return Ok(true)
+        },
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
+        ("java/lang/String", "intern", "()Ljava/lang/String;") => {
+            let obj = args[0].clone().to_ref().unwrap();
+            let value = try!(get_field(obj, "java/lang/String", "value"));
+            let string = extract_from_char_array(&value);
+            if !runtime.string_interns.contains_key(&string) {
+                let var = try!(construct_object(runtime, &"java/lang/String"));
+                let mut arguments = vec!(var.clone(), value);
+                let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
+                try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", "([C)V", false));
+                runtime.string_interns.insert(string.clone(), var.clone());
+            }
+            runtime.current_frame.operand_stack.push(runtime.string_interns.get(&string).unwrap().clone());
+            return Ok(true);
+        },
         ("java/lang/Float", "floatToRawIntBits", "(F)I") => {
             let float = args[0].to_float();
             let bits = unsafe {std::mem::transmute::<f32, u32>(float)};
@@ -847,6 +946,13 @@ fn put_field(obj: Rc<Object>, class_name: &str, field_name: &str, value: Variabl
     return Ok(());
 }
 
+fn get_field(obj: Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
+    let mut super_obj = try!(get_super_obj(obj, class_name));
+    let mut super_obj_with_field = try!(get_obj_field(super_obj, field_name));
+    let members = super_obj_with_field.members.borrow();
+    return Ok(members.get(&*field_name).unwrap().clone());
+}
+
 fn icmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
     where F: Fn(i32, i32) -> bool
 {
@@ -1013,14 +1119,14 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
             67...70 => try!(store("FSTORE", op_code - 67, runtime, Variable::Float)),
             71...74 => try!(store("DSTORE", op_code - 71, runtime, Variable::Double)),
             75...78 => try!(store("ASTORE", op_code - 75, runtime, Variable::Reference)),
-            79 => try!(astore("IASTORE", runtime, Variable::Int)),
-            80 => try!(astore("LASTORE", runtime, Variable::Long)),
-            81 => try!(astore("FASTORE", runtime, Variable::Float)),
-            82 => try!(astore("DASTORE", runtime, Variable::Double)),
-            83 => try!(astore("AASTORE", runtime, Variable::Reference)),
-            84 => try!(astore("BASTORE", runtime, Variable::Byte)),
-            85 => try!(astore("CASTORE", runtime, Variable::Char)),
-            86 => try!(astore("SASTORE", runtime, Variable::Short)),
+            79 => try!(astore("IASTORE", runtime, |x| x.clone())),
+            80 => try!(astore("LASTORE", runtime, |x| x.clone())),
+            81 => try!(astore("FASTORE", runtime, |x| x.clone())),
+            82 => try!(astore("DASTORE", runtime, |x| x.clone())),
+            83 => try!(astore("AASTORE", runtime, |x| x.clone())),
+            84 => try!(astore("BASTORE", runtime, |x| Variable::Byte(x.to_int() as u8))),
+            85 => try!(astore("CASTORE", runtime, |x| Variable::Char(std::char::from_u32((x.to_int() as u32) & 0xFF).unwrap()))),
+            86 => try!(astore("SASTORE", runtime, |x| Variable::Short(x.to_int() as i16))),
             87 => {
                 let popped = runtime.current_frame.operand_stack.pop().unwrap();
                 debugPrint!(true, 2, "POP {}", popped);
@@ -1166,10 +1272,8 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 let var = runtime.current_frame.operand_stack.pop().unwrap();
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
                 debugPrint!(true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}'", class_name, field_name, typ, obj);
-                let mut super_obj = try!(get_super_obj(obj, class_name.as_str()));
-                let mut super_obj_with_field = try!(get_obj_field(super_obj, field_name.as_str()));
-                let members = super_obj_with_field.members.borrow();
-                runtime.current_frame.operand_stack.push(members.get(&*field_name).unwrap().clone());
+                let f = try!(get_field(obj, class_name.as_str(), field_name.as_str()));
+                runtime.current_frame.operand_stack.push(f);
             }
             181 => {
                 let field_index = try!(buf.read_u16::<BigEndian>());
@@ -1300,8 +1404,8 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 // TODO: Implement monitor
                 debugPrint!(true, 1, "WARNING: MonitorExit not implemented");
             },
-            198 => try!(branch_if("IFNULL", runtime, &mut buf, current_position, |x| x.to_ref().is_none())),
-            199 => try!(branch_if("IFNONNULL", runtime, &mut buf, current_position, |x| x.to_ref().is_some())),
+            198 => try!(branch_if("IFNULL", runtime, &mut buf, current_position, |x| x.is_null())),
+            199 => try!(branch_if("IFNONNULL", runtime, &mut buf, current_position, |x| !x.is_null())),
             _ => return Err(RunnerError::UnknownOpCode(op_code))
         }
     }
@@ -1368,7 +1472,7 @@ fn load_class(mut runtime: &mut Runtime, name: &str) -> Result<Rc<Class>, Runner
 }
 
 fn bootstrap_class_and_dependencies(mut runtime: &mut Runtime, name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError>  {
-    let mut unresolved_classes : HashSet<String> = HashSet::new();
+    let mut unresolved_classes : Vec<String> = Vec::new();
     let mut classes_to_process : Vec<Rc<Class>> = Vec::new();
 
     let new_class = Rc::new(Class::new(&String::from(name), class_result));
@@ -1378,14 +1482,15 @@ fn bootstrap_class_and_dependencies(mut runtime: &mut Runtime, name: &str, class
     find_unresolved_class_dependencies(&mut runtime.classes, &mut unresolved_classes, class_result);
 
     while unresolved_classes.len() > 0 {
-        let class_to_resolve = unresolved_classes.iter().next().unwrap().clone();
-        debugPrint!(true, 2, "Finding unresolved dependencies in class {}", class_to_resolve);
-        unresolved_classes.remove(&class_to_resolve);
-        let class_result_to_resolve = try!(find_class(&class_to_resolve, &runtime.class_paths));
-        let new_class = Rc::new(Class::new(&class_to_resolve, &class_result_to_resolve));
-        runtime.classes.insert(class_to_resolve, new_class.clone());
-        classes_to_process.push(new_class);
-        find_unresolved_class_dependencies(&mut runtime.classes, &mut unresolved_classes, &class_result_to_resolve);
+        let class_to_resolve = unresolved_classes.pop().unwrap().clone();
+        if !runtime.classes.contains_key(&class_to_resolve) {
+            debugPrint!(true, 2, "Finding unresolved dependencies in class {}", class_to_resolve);
+            let class_result_to_resolve = try!(find_class(&class_to_resolve, &runtime.class_paths));
+            let new_class = Rc::new(Class::new(&class_to_resolve, &class_result_to_resolve));
+            runtime.classes.insert(class_to_resolve, new_class.clone());
+            classes_to_process.push(new_class);
+            find_unresolved_class_dependencies(&mut runtime.classes, &mut unresolved_classes, &class_result_to_resolve);
+        }
     }
 
     for class in &classes_to_process {
@@ -1398,7 +1503,7 @@ fn bootstrap_class_and_dependencies(mut runtime: &mut Runtime, name: &str, class
     return Ok(runtime.classes.get(&String::from(name)).unwrap().clone());
 }
 
-fn find_unresolved_class_dependencies(classes: &mut HashMap<String, Rc<Class>>, unresolved_classes: &mut HashSet<String>, class_result: &ClassResult) -> Result<(), RunnerError> {
+fn find_unresolved_class_dependencies(classes: &mut HashMap<String, Rc<Class>>, unresolved_classes: &mut Vec<String>, class_result: &ClassResult) -> Result<(), RunnerError> {
     let debug = false;
     for field in &class_result.fields {
         let name_string = try!(get_cp_str(&class_result.constant_pool, field.name_index));
@@ -1410,7 +1515,7 @@ fn find_unresolved_class_dependencies(classes: &mut HashMap<String, Rc<Class>>, 
         match variable {
             Variable::UnresolvedReference(ref type_string) => {
                 debugPrint!(debug, 3, "Class {} is unresolved", type_string);
-                unresolved_classes.insert(type_string.clone());
+                unresolved_classes.push(type_string.clone());
             },
             _ => {}
         }
@@ -1419,11 +1524,11 @@ fn find_unresolved_class_dependencies(classes: &mut HashMap<String, Rc<Class>>, 
     if class_result.super_class_index > 0 {
         let class_name = try!(get_cp_class(&class_result.constant_pool, class_result.super_class_index));
         if !classes.contains_key(&*class_name) {
-            unresolved_classes.insert((*class_name).clone());
+            unresolved_classes.push((*class_name).clone());
         }
     }
     if !classes.contains_key(&String::from("java/lang/Object")) {
-        unresolved_classes.insert(String::from("java/lang/Object"));
+        unresolved_classes.push(String::from("java/lang/Object"));
     }
     return Ok(());
 }
@@ -1601,17 +1706,7 @@ fn parse_function_type_string(classes: &HashMap<String, Rc<Class>>, string: &str
 
 pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
     println!("Running");
-    let mut runtime = Runtime {
-        class_paths: class_paths.clone(),
-        previous_frames: Vec::new(),
-        current_frame: Frame {
-            constant_pool: class.constant_pool.clone(),
-            operand_stack: Vec::new(),
-            local_variables: Vec::new()},
-        classes: HashMap::new(),
-        count: 0,
-        current_thread: None
-    };
+    let mut runtime = Runtime::new(class_paths.clone(), class.constant_pool.clone());
 
     bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class);
 
@@ -1624,20 +1719,7 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
 
 pub fn run_method(class_paths: &Vec<String>, class: &ClassResult, method: &str, arguments: &Vec<Variable>, return_type: Option<&Variable>) -> Result<Variable, RunnerError> {
     println!("Running method {} with {} arguments", method, arguments.len());
-    let mut runtime = Runtime {
-        class_paths: class_paths.clone(),
-        previous_frames: vec!(Frame {
-            constant_pool: HashMap::new(),
-            operand_stack: Vec::new(),
-            local_variables: Vec::new()}),
-        current_frame: Frame {
-            constant_pool: class.constant_pool.clone(),
-            operand_stack: Vec::new(),
-            local_variables: Vec::new()},
-        classes: HashMap::new(),
-        count: 0,
-        current_thread: None
-    };
+    let mut runtime = Runtime::new(class_paths.clone(), class.constant_pool.clone());
 
     try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
 
