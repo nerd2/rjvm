@@ -918,6 +918,24 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
     return Ok(());
 }
 
+fn fcmp(desc: &str, mut runtime: &mut Runtime, is_g: bool) -> Result<(), RunnerError> {
+    let pop2 = runtime.current_frame.operand_stack.pop().unwrap().to_float();
+    let pop1 = runtime.current_frame.operand_stack.pop().unwrap().to_float();
+    debugPrint!(true, 2, "{} {} {}", desc, pop1, pop2);
+    let ret;
+    if pop1.is_nan() || pop2.is_nan() {
+        ret = if is_g {1} else {-1}
+    } else if pop1 > pop2 {
+        ret = 1;
+    } else if pop1 == pop2 {
+        ret = 0;
+    } else {
+        ret = -1;
+    }
+    runtime.current_frame.operand_stack.push(Variable::Int(ret));
+    return Ok(());
+}
+
 fn ifcmp<F>(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
     where F: Fn(i32) -> bool
 {
@@ -1240,6 +1258,8 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 debugPrint!(true, 2, "I2S {}", popped);
                 runtime.current_frame.operand_stack.push(Variable::Short(popped.to_int() as i16));
             }
+            149 => try!(fcmp("FCMPG", runtime, true)),
+            150 => try!(fcmp("FCMPL", runtime, false)),
             153 => try!(ifcmp("IFEQ", runtime, &mut buf, |x| x == 0)),
             154 => try!(ifcmp("IFNE", runtime, &mut buf, |x| x != 0)),
             155 => try!(ifcmp("IFLT", runtime, &mut buf, |x| x < 0)),
