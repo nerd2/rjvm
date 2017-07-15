@@ -1252,6 +1252,16 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 debugPrint!(true, 2, "I2L {}", popped);
                 runtime.current_frame.operand_stack.push(Variable::Long(popped.to_int() as i64));
             }
+            134 => {
+                let popped = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "I2F {}", popped);
+                runtime.current_frame.operand_stack.push(Variable::Float(popped.to_int() as f32));
+            }
+            135 => {
+                let popped = runtime.current_frame.operand_stack.pop().unwrap();
+                debugPrint!(true, 2, "I2D {}", popped);
+                runtime.current_frame.operand_stack.push(Variable::Double(popped.to_int() as f64));
+            }
             136 => single_pop_instr("L2I", runtime, Variable::Int, Variable::to_long, |x| x as i32),
             147 => {
                 let popped = runtime.current_frame.operand_stack.pop().unwrap();
