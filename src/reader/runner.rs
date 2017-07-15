@@ -1025,6 +1025,14 @@ fn rc_ptr_eq<T: ?Sized>(this: Rc<T>, other: Rc<T>) -> bool {
     this_ptr == other_ptr
 }
 
+fn cast<F>(desc: &str, mut runtime: &mut Runtime, mutator: F)
+    where F: Fn(&Variable) -> Variable
+{
+    let popped = runtime.current_frame.operand_stack.pop().unwrap();
+    debugPrint!(true, 2, "{} {}", desc, popped);
+    runtime.current_frame.operand_stack.push(mutator(&popped));
+}
+
 fn ifacmp(desc: &str, mut runtime: &mut Runtime, mut buf: &mut Cursor<&Vec<u8>>, should_match: bool) -> Result<(), RunnerError>
 {
     let current_position = buf.position() - 1;
@@ -1247,27 +1255,19 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                 let old_val = runtime.current_frame.local_variables[index as usize].to_int();
                 runtime.current_frame.local_variables[index as usize] = Variable::Int(old_val + constt as i32);
             }
-            133 => {
-                let popped = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "I2L {}", popped);
-                runtime.current_frame.operand_stack.push(Variable::Long(popped.to_int() as i64));
-            }
-            134 => {
-                let popped = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "I2F {}", popped);
-                runtime.current_frame.operand_stack.push(Variable::Float(popped.to_int() as f32));
-            }
-            135 => {
-                let popped = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "I2D {}", popped);
-                runtime.current_frame.operand_stack.push(Variable::Double(popped.to_int() as f64));
-            }
+            133 => cast("I2L", runtime, |x| Variable::Long(x.to_int() as i64)),
+            134 => cast("I2F", runtime, |x| Variable::Float(x.to_int() as f32)),
+            135 => cast("I2D", runtime, |x| Variable::Double(x.to_int() as f64)),
             136 => single_pop_instr("L2I", runtime, Variable::Int, Variable::to_long, |x| x as i32),
-            147 => {
-                let popped = runtime.current_frame.operand_stack.pop().unwrap();
-                debugPrint!(true, 2, "I2S {}", popped);
-                runtime.current_frame.operand_stack.push(Variable::Short(popped.to_int() as i16));
-            }
+            139 => cast("F2I", runtime, |x| Variable::Int(x.to_float() as i32)),
+            140 => cast("F2L", runtime, |x| Variable::Long(x.to_float() as i64)),
+            141 => cast("F2D", runtime, |x| Variable::Double(x.to_float() as f64)),
+            142 => cast("D2I", runtime, |x| Variable::Int(x.to_double() as i32)),
+            143 => cast("D2L", runtime, |x| Variable::Long(x.to_double() as i64)),
+            144 => cast("D2F", runtime, |x| Variable::Float(x.to_double() as f32)),
+            145 => cast("I2B", runtime, |x| Variable::Byte(x.to_int() as u8)),
+            146 => cast("I2C", runtime, |x| Variable::Char(std::char::from_u32(x.to_int() as u32).unwrap_or('\0'))),
+            147 => cast("I2S", runtime, |x| Variable::Short(x.to_int() as i16)),
             149 => try!(fcmp("FCMPG", runtime, true)),
             150 => try!(fcmp("FCMPL", runtime, false)),
             153 => try!(ifcmp("IFEQ", runtime, &mut buf, |x| x == 0)),
