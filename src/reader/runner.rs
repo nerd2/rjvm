@@ -252,6 +252,7 @@ impl fmt::Display for Variable {
 
 #[derive(Clone, Debug)]
 struct Frame {
+    class: Option<Rc<Class>>,
     constant_pool: HashMap<u16, ConstantPoolItem>,
     local_variables: Vec<Variable>,
     operand_stack: Vec<Variable>,
@@ -272,10 +273,12 @@ impl Runtime {
         return Runtime {
             class_paths: class_paths,
             previous_frames: vec!(Frame {
+                class: None,
                 constant_pool: HashMap::new(),
                 operand_stack: Vec::new(),
                 local_variables: Vec::new()}),
             current_frame: Frame {
+                class: None,
                 constant_pool: constant_pool,
                 operand_stack: Vec::new(),
                 local_variables: Vec::new()},
@@ -675,6 +678,7 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
 
 fn invoke_manual(mut runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, method_name: &str, method_descriptor: &str, allow_not_found: bool) -> Result<(), RunnerError>{
     let new_frame = Frame {
+        class: Some(class.clone()),
         constant_pool: class.cr.constant_pool.clone(),
         operand_stack: Vec::new(),
         local_variables: args.clone()};
@@ -746,7 +750,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("java/lang/Runtime", "availableProcessors", "()I") => {
             debugPrint!(true, 2, "BUILTIN: availableProcessors");
             runtime.current_frame.operand_stack.push(Variable::Int(1));
-            return Ok(true)
+            return Ok(true);
         },
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
         ("java/lang/String", "intern", "()Ljava/lang/String;") => {
@@ -832,6 +836,18 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             runtime.current_frame.operand_stack.push(runtime.current_thread.as_ref().unwrap().clone());
             return Ok(true)
         }
+        ("sun/reflect/Reflection", "getCallerClass", "()Ljava/lang/Class;") => {
+            let maybe_class = runtime.previous_frames[runtime.previous_frames.len()-1].class.clone();
+            let var;
+            if maybe_class.is_some() {
+                var = try!(make_class(runtime, maybe_class.unwrap().clone()));
+            } else {
+                var = Variable::Reference(try!(load_class(runtime, "java/lang/Class")), None);
+            }
+            debugPrint!(true, 2, "BUILTIN: getCallerClass {}", var);
+            runtime.current_frame.operand_stack.push(var);
+            return Ok(true);
+        }
         _ => return Ok(false)
     };
 }
@@ -888,6 +904,7 @@ fn invoke(desc: &str, mut runtime: &mut Runtime, index: u16, with_obj: bool, spe
         }
 
         new_frame = Some(Frame {
+            class: Some(class.clone()),
             constant_pool: class.cr.constant_pool.clone(),
             operand_stack: Vec::new(),
             local_variables: new_local_variables
@@ -935,6 +952,21 @@ fn make_string(mut runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerE
     let mut arguments = vec!(var.clone(), construct_char_array(val));
     let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
     try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", "([C)V", false));
+    return Ok(var);
+}
+
+fn make_class(mut runtime: &mut Runtime, class: Rc<Class>) -> Result<Variable, RunnerError> {
+    let var = try!(construct_object(runtime, &"java/lang/Class"));
+
+    debugPrint!(true, 2, "LDC class {}", class.name.as_str());
+    let mut arguments = vec!(var.clone(),
+                            try!(make_string(runtime, class.name.as_str())),
+                            Variable::Boolean(false),
+                            Variable::Boolean(false),
+                            Variable::Boolean(false));
+    let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
+    let method_desc = generate_method_descriptor(&arguments, None, false);
+    try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", method_desc.as_str(), false));
     return Ok(var);
 }
 
@@ -1043,19 +1075,10 @@ fn do_run_method(name: &str, mut runtime: &mut Runtime, code: &Code, pc: u16) ->
                             runtime.current_frame.operand_stack.push(var);
                         }
                         &ConstantPoolItem::CONSTANT_Class { index } => {
-                            let var = try!(construct_object(runtime, &"java/lang/Class"));
                             let class_name = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
-                            let class = try!(load_class(runtime, class_name.as_str()));
 
-                            debugPrint!(true, 2, "LDC class {}", class_name.as_str());
-                            let mut arguments = vec!(var.clone(),
-                                    try!(make_string(runtime, class_name.as_str())),
-                                    Variable::Boolean(false),
-                                    Variable::Boolean(false),
-                                    Variable::Boolean(false));
-                            let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
-                            let method_desc = generate_method_descriptor(&arguments, None, false);
-                            try!(invoke_manual(runtime, obj.typeRef.clone(), arguments, "<init>", method_desc.as_str(), false));
+                            let class = try!(load_class(runtime, class_name.as_str()));
+                            let var = try!(make_class(runtime, class));
 
                             runtime.current_frame.operand_stack.push(var);
                         }

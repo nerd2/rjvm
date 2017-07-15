@@ -3,6 +3,7 @@ package java.lang;
 import java.io.InputStream;
 import java.io.ObjectStreamField;
 import java.io.Serializable;
+import java.lang.ClassLoader;
 import java.lang.ClassValue.ClassValueMap;
 import java.lang.annotation.Annotation;
 import java.lang.ref.SoftReference;
@@ -83,6 +84,10 @@ public final class Class<T> implements Serializable, GenericDeclaration, Type, A
 
     public boolean desiredAssertionStatus() {
         return false;
+    }
+
+    public ClassLoader getClassLoader() {
+        return null;
     }
 
     public static Class getPrimitiveClass(String typeName) {
