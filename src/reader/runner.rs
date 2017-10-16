@@ -827,18 +827,18 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
         ("java/util/concurrent/atomic/AtomicLong", "VMSupportsCS8", "()Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
         ("java/lang/Class", "registerNatives", "()V") => {}
-        ("java/lang/Class", "isArray", "()Z") => {
+        ("java/lang/Class", "is_array", "()Z") => {
             let obj = args[0].clone().to_ref().unwrap();
             let members = obj.members.borrow();
-            let value = members.get(&String::from("__isArray")).unwrap();
-            debugPrint!(true, 2, "BUILTIN: isArray {}", value);
+            let value = members.get(&String::from("__is_array")).unwrap();
+            debugPrint!(true, 2, "BUILTIN: is_array {}", value);
             push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
         }
-        ("java/lang/Class", "isPrimitive", "()Z") => {
+        ("java/lang/Class", "is_primitive", "()Z") => {
             let obj = args[0].clone().to_ref().unwrap();
             let members = obj.members.borrow();
-            let value = members.get(&String::from("__isPrimitive")).unwrap();
-            debugPrint!(true, 2, "BUILTIN: isPrimitive {}", value);
+            let value = members.get(&String::from("__is_primitive")).unwrap();
+            debugPrint!(true, 2, "BUILTIN: is_primitive {}", value);
             push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
         }
         ("java/lang/Class", "getPrimitiveClass", "(Ljava/lang/String;)Ljava/lang/Class;") => {
@@ -849,10 +849,10 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         ("java/lang/Class", "isAssignableFrom", "(Ljava/lang/Class;)Z") => {
-            let classObject1 = args[0].clone().to_ref().unwrap();
-            let mut class1 = classObject1.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
-            let classObject2 = args[1].clone().to_ref().unwrap();
-            let class2 = classObject2.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+            let class_object_1 = args[0].clone().to_ref().unwrap();
+            let mut class1 = class_object_1.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+            let class_object_2 = args[1].clone().to_ref().unwrap();
+            let class2 = class_object_2.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
             while class1 != class2 {
                 if class1.super_class.borrow().is_none() { break; }
                 let new_class1 = class1.super_class.borrow().clone().unwrap();
@@ -862,16 +862,16 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(class1 == class2));
         }
         ("java/lang/Class", "getComponentType", "()Ljava/lang/Class;") => {
-            let classObject1 = args[0].clone().to_ref().unwrap();
-            let isArray = classObject1.members.borrow().get(&String::from("__isArray")).unwrap().to_bool();
-            let isPrimitive = classObject1.members.borrow().get(&String::from("__isPrimitive")).unwrap().to_bool();
+            let class_object_1 = args[0].clone().to_ref().unwrap();
+            let is_array = class_object_1.members.borrow().get(&String::from("__is_array")).unwrap().to_bool();
+            let is_primitive = class_object_1.members.borrow().get(&String::from("__is_primitive")).unwrap().to_bool();
             let var =
-                if isArray {
-                    if isPrimitive {
+                if is_array {
+                    if is_primitive {
                         args[0].clone() // TODO: this is rubbish
                     } else {
-                        let componentClass = classObject1.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
-                        try!(make_class(runtime, componentClass.name.as_str()))
+                        let component_class = class_object_1.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+                        try!(make_class(runtime, component_class.name.as_str()))
                     }
                 } else {
                     try!(construct_object(runtime, &"java/lang/Class"))
@@ -881,13 +881,13 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         },
         ("java/lang/Class", "forName0", "(Ljava/lang/String;ZLjava/lang/ClassLoader;Ljava/lang/Class;)Ljava/lang/Class;") => {
-            let classNameStringObj = args[0].clone().to_ref().unwrap();
-            let className = try!(extract_from_string(&classNameStringObj));
+            let class_name_string_obj = args[0].clone().to_ref().unwrap();
+            let class_name = try!(extract_from_string(&class_name_string_obj));
             let initialize = args[1].to_bool();
-            let ref classLoader = args[2];
-            let ref callerClass = args[3];
-            debugPrint!(true, 2, "BUILTIN: forName0 {} {} {} {}", className, initialize, classLoader, callerClass);
-            let var = try!(make_class(runtime, className.as_str()));
+            let ref class_loader = args[2];
+            let ref caller_class = args[3];
+            debugPrint!(true, 2, "BUILTIN: forName0 {} {} {} {}", class_name, initialize, class_loader, caller_class);
+            let var = try!(make_class(runtime, class_name.as_str()));
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
@@ -1201,8 +1201,8 @@ fn get_primitive_class(mut runtime: &mut Runtime, typ: String) -> Result<Variabl
     let var = try!(construct_object(runtime, &"java/lang/Class"));
     put_field(var.to_ref().unwrap(), &"java/lang/Class", "initted", Variable::Boolean(true));
     let members = &var.to_ref().unwrap().members;
-    members.borrow_mut().insert(String::from("__isPrimitive"), Variable::Boolean(true));
-    members.borrow_mut().insert(String::from("__isArray"), Variable::Boolean(false));
+    members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(true));
+    members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(false));
     runtime.class_objects.insert(typ, var.clone());
 
     return Ok(var);
@@ -1224,11 +1224,11 @@ fn make_class(mut runtime: &mut Runtime, class_name: &str) -> Result<Variable, R
     let members = &var.to_ref().unwrap().members;
 
     let subtype = try!(parse_single_type_string(runtime, class_name, true));
-    let mut isPrimitive = false;
-    let mut isArray = false;
+    let mut is_primitive = false;
+    let mut is_array = false;
     match subtype {
         Variable::Reference(class, _) => {
-            let reflectionDataObject = try!(construct_object(runtime, &"java/lang/Class$ReflectionData"));
+            let reflection_data_object = try!(construct_object(runtime, &"java/lang/Class$ReflectionData"));
             {
                 let mut field_objects : Vec<Variable> = Vec::new();
                 for field in &class.cr.fields {
@@ -1237,9 +1237,9 @@ fn make_class(mut runtime: &mut Runtime, class_name: &str) -> Result<Variable, R
                     let field_object = try!(make_field(runtime, name_string, descriptor_string, field.access_flags));
                     field_objects.push(field_object);
                 }
-                let declaredFieldsArray = Variable::ArrayReference(Rc::new(try!(construct_object(runtime, &"java/lang/reflect/Field"))),
+                let declared_fields_array = Variable::ArrayReference(Rc::new(try!(construct_object(runtime, &"java/lang/reflect/Field"))),
                                                                    Some(Rc::new(RefCell::new(field_objects))));
-                put_field(reflectionDataObject.to_ref().unwrap(), &"java/lang/Class$ReflectionData", "declaredFields", declaredFieldsArray);
+                put_field(reflection_data_object.to_ref().unwrap(), &"java/lang/Class$ReflectionData", "declaredFields", declared_fields_array);
             }
             {
                 let mut method_objects : Vec<Variable> = Vec::new();
@@ -1249,32 +1249,32 @@ fn make_class(mut runtime: &mut Runtime, class_name: &str) -> Result<Variable, R
                     let methods_object = try!(make_method(runtime, name_string, descriptor_string, method.access_flags));
                     method_objects.push(methods_object);
                 }
-                let declaredMethodsArray = Variable::ArrayReference(Rc::new(try!(construct_object(runtime, &"java/lang/reflect/Method"))),
+                let declared_methods_array = Variable::ArrayReference(Rc::new(try!(construct_object(runtime, &"java/lang/reflect/Method"))),
                                                                    Some(Rc::new(RefCell::new(method_objects))));
-                put_field(reflectionDataObject.to_ref().unwrap(), &"java/lang/Class$ReflectionData", "declaredMethods", declaredMethodsArray);
+                put_field(reflection_data_object.to_ref().unwrap(), &"java/lang/Class$ReflectionData", "declaredMethods", declared_methods_array);
             }
 
-            let softReferenceObject = try!(construct_object(runtime, &"java/lang/ref/SoftReference"));
-            put_field(softReferenceObject.to_ref().unwrap(), &"java/lang/ref/SoftReference", "referent", reflectionDataObject);
+            let soft_reference_object = try!(construct_object(runtime, &"java/lang/ref/SoftReference"));
+            put_field(soft_reference_object.to_ref().unwrap(), &"java/lang/ref/SoftReference", "referent", reflection_data_object);
 
-            put_field(var.to_ref().unwrap(), &"java/lang/Class", "reflectionData", softReferenceObject);
+            put_field(var.to_ref().unwrap(), &"java/lang/Class", "reflectionData", soft_reference_object);
             members.borrow_mut().insert(String::from("__class"), Variable::Reference(class.clone(), None));
         },
         Variable::ArrayReference(basis, _x) => {
-            isArray = true;
+            is_array = true;
             match &*basis {
                 &Variable::Reference(ref class, _) => {
                     members.borrow_mut().insert(String::from("__class"), Variable::Reference(class.clone(), None));
                 },
                 _ => {
-                    isPrimitive = true;
+                    is_primitive = true;
                 }
             }
         },
-        _ => { isPrimitive = true; }
+        _ => { is_primitive = true; }
     }
-    members.borrow_mut().insert(String::from("__isPrimitive"), Variable::Boolean(isPrimitive));
-    members.borrow_mut().insert(String::from("__isArray"), Variable::Boolean(isArray));
+    members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(is_primitive));
+    members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(is_array));
 
     runtime.class_objects.insert(String::from(class_name), var.clone());
 
