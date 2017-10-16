@@ -46,6 +46,24 @@ mod tests {
     #[test]
     fn string() {
         assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Char('a'));
+        assert_eq!(run_method(Path::new("tests/string.class"), "copy", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Char('o'));
+        assert_eq!(run_method(Path::new("tests/string.class"), "getBytes", &Vec::new(), Some(&Variable::Byte(0)), &Vec::new()), Variable::Byte('e' as u8));
+        assert_eq!(run_method(Path::new("tests/string.class"), "getHashCode", &Vec::new(), Some(&Variable::Int(0)), &Vec::new()), Variable::Int(2));
+    }
+
+    #[test]
+    fn string_intern() {
+        assert_eq!(void_int_call("tests/string.class", "intern"), 0x2);
+    }
+
+    #[test]
+    fn builtins_reflection() {
+        assert_eq!(void_int_call("tests/builtins_reflection.class", "getCallerClassTest"), 0x1);
+    }
+
+    #[test]
+    fn class_getDeclared() {
+        assert_eq!(void_int_call("tests/clazz.class", "getDeclaredFieldsTest"), 0x3);
     }
 
     fn void_int_call(path: &str, method: &str) -> i32 {
@@ -67,6 +85,11 @@ mod tests {
         assert_eq!(void_int_call("tests/inheritance.class", "basicExtension"), 0x3987);
         assert_eq!(void_int_call("tests/inheritance.class", "basicImplementationDowncast"), 3);
         assert_eq!(void_int_call("tests/inheritance.class", "extendedMultipleImls"), 0x403);
+    }
+
+    #[test]
+    fn multideps() {
+        assert_eq!(void_int_call("tests/multideps.class", "test"), 5);
     }
 
     #[test]

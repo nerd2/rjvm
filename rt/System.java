@@ -1,7 +1,13 @@
 package java.lang;
 
+import java.io.InputStream;
+import java.io.PrintStream;
+
 class System {
-    private static SecurityManager security = new SecurityManager();
+    public static final InputStream in = null;
+    public static final PrintStream out = null;
+    public static final PrintStream err = null;
+    private static SecurityManager security = null;
 
     public static void arraycopy(Object src, int srcPos, Object dest, int destPos, int len) {
         Object[] srcArray = (Object[])src;

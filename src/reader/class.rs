@@ -2,6 +2,7 @@
 
 extern crate byteorder;
 
+use std::char;
 use std::path::Path;
 use std::fs::File;
 use std::str;
@@ -10,7 +11,6 @@ use std::collections::HashMap;
 use std::io;
 use std::io::Read;
 use std::io::BufReader;
-use std::string::FromUtf8Error;
 use std::string::String;
 use std::rc::Rc;
 
@@ -27,6 +27,8 @@ macro_rules! debugPrint {
 pub enum ClassReadError {
     Io(io::Error),
     Parse,
+    Parse2(String),
+    UTF8Error(String),
     UnsupportedVersion(f32)
 }
 
@@ -129,17 +131,14 @@ impl ClassResult {
             code: None
         }
     }
+    pub fn name(&self) -> Result<Rc<String>, ClassReadError> {
+        return get_cp_class_name(&self.constant_pool, self.this_class_index);
+    }
 }
 
 impl From<io::Error> for ClassReadError {
     fn from(err: io::Error) -> ClassReadError {
         ClassReadError::Io(err)
-    }
-}
-
-impl From<FromUtf8Error> for ClassReadError {
-    fn from(err: FromUtf8Error) -> ClassReadError {
-        ClassReadError::Parse
     }
 }
 
@@ -164,6 +163,7 @@ fn read_exception(reader: &mut Read) -> Result<ExceptionItem, ClassReadError> {
 pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, ClassReadError> {
     let maybe_cp_entry = cp.get(&index);
     if maybe_cp_entry.is_none() {
+        debugPrint!(true, 2, "Constant pool item at index {} is not present", index);
         return Err(ClassReadError::Parse);
     } else {
         match *maybe_cp_entry.unwrap() {
@@ -171,7 +171,7 @@ pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<S
                 return Ok(s.clone());
             }
             _ => {
-                debugPrint!(true, 4, "Constant pool item at index {} is not UTF8, actually {:?}", index, maybe_cp_entry.unwrap());
+                debugPrint!(true, 2, "Constant pool item at index {} is not UTF8, actually {:?}", index, maybe_cp_entry.unwrap());
                 return Err(ClassReadError::Parse);
             }
         }
@@ -277,6 +277,36 @@ fn read_field(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Result<
     return Ok(field);
 }
 
+fn string_from_utf8(buf: &Vec<u8>) -> Result<String, ClassReadError> {
+    let mut ret = String::new();
+    let mut iter = buf.iter();
+    let mut maybe_x;
+    while {maybe_x = iter.next(); maybe_x.is_some()} {
+        let x = *maybe_x.unwrap() as u32;
+        if x < 128 {
+            ret.push((x as u8) as char);
+        } else if x & 0xE0 == 0xC0 {
+            let y = *iter.next().unwrap() as u32;
+            ret.push(char::from_u32((y & 0x3F) | (x & 0x1F) << 6).unwrap());
+        } else if x & 0xF0 == 0xE0 {
+            let y = *iter.next().unwrap() as u32;
+            let z = *iter.next().unwrap() as u32;
+            ret.push(char::from_u32((z & 0x3F) | (y & 0x3F) << 6 | (x & 0xF) << 12).unwrap());
+        } else if x == 0xED {
+            let u = x;
+            let v = *iter.next().unwrap() as u32;
+            let w = *iter.next().unwrap() as u32;
+            let x = *iter.next().unwrap() as u32;
+            let y = *iter.next().unwrap() as u32;
+            let z = *iter.next().unwrap() as u32;
+            ret.push(char::from_u32((z & 0x3F) | (y & 0xF) << 6 | (w & 0x3F) << 10 | (v & 0xF) << 16 | 0x10000).unwrap());
+        } else {
+            return Err(ClassReadError::UTF8Error(format!("Invalid code byte {}", x)));
+        }
+    }
+    return Ok(ret);
+}
+
 fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<ConstantPoolItem, ClassReadError> {
     let debug = true;
     let tag = try!(reader.read_u8());
@@ -287,7 +317,7 @@ fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<Consta
             let length = try!(reader.read_u16::<BigEndian>());
             let mut buf: Vec<u8> = Vec::new();
             try!(reader.take(length as u64).read_to_end(&mut buf));
-            let string = try!(String::from_utf8(buf));
+            let string = try!(string_from_utf8(&buf));
             debugPrint!(debug, 4, "UTF8 {} '{}'", length, string);
             return Ok(ConstantPoolItem::CONSTANT_Utf8(Rc::new(string)));
         },
