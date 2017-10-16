@@ -67,15 +67,15 @@ mod tests {
     }
 
     fn void_int_call(path: &str, method: &str) -> i32 {
-        return run_method(Path::new(path), method, &Vec::new(), Some(&Variable::Int(0)), &vec!(String::from("/Users/sam/Personal/rjvm/tests/"))).to_int();
+        return run_method(Path::new(path), method, &Vec::new(), Some(&Variable::Int(0)), &vec!(String::from("./tests/"))).to_int();
     }
 
     fn int_int_call(path: &str, method: &str, arg: i32) -> i32 {
-        return run_method(Path::new(path), method, &vec!(Variable::Int(arg)), Some(&Variable::Int(0)), &vec!(String::from("/Users/sam/Personal/rjvm/tests/"))).to_int();
+        return run_method(Path::new(path), method, &vec!(Variable::Int(arg)), Some(&Variable::Int(0)), &vec!(String::from("./tests/"))).to_int();
     }
 
     fn int2_int_call(path: &str, method: &str, arg: i32, arg2: i32) -> i32 {
-        return run_method(Path::new(path), method, &vec!(Variable::Int(arg), Variable::Int(arg2)), Some(&Variable::Int(0)), &vec!(String::from("/Users/sam/Personal/rjvm/tests/"))).to_int();
+        return run_method(Path::new(path), method, &vec!(Variable::Int(arg), Variable::Int(arg2)), Some(&Variable::Int(0)), &vec!(String::from("./tests/"))).to_int();
     }
 
     #[test]
