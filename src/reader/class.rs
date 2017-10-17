@@ -1,5 +1,12 @@
 #![macro_escape]
 
+#![deny(
+unreachable_code,
+unused_assignments,
+unused_imports,
+unused_variables,
+)]
+
 extern crate byteorder;
 
 use std::char;
@@ -16,7 +23,7 @@ use std::rc::Rc;
 
 use self::byteorder::{BigEndian, ReadBytesExt};
 
-macro_rules! PRINT_LEVEL { () => {3} }
+macro_rules! PRINT_LEVEL { () => {2} }
 
 macro_rules! debugPrint {
     ($enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$level {print!(" "); } println!($fmt); } }};
@@ -33,6 +40,7 @@ pub enum ClassReadError {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+#[allow(non_camel_case_types)]
 pub enum ConstantPoolItem {
     CONSTANT_Utf8(Rc<String>),
     CONSTANT_Class{index: u16},
@@ -293,10 +301,12 @@ fn string_from_utf8(buf: &Vec<u8>) -> Result<String, ClassReadError> {
             let z = *iter.next().unwrap() as u32;
             ret.push(char::from_u32((z & 0x3F) | (y & 0x3F) << 6 | (x & 0xF) << 12).unwrap());
         } else if x == 0xED {
-            let u = x;
             let v = *iter.next().unwrap() as u32;
             let w = *iter.next().unwrap() as u32;
-            let x = *iter.next().unwrap() as u32;
+            let head2 = *iter.next().unwrap() as u32;
+            if head2 != 0xED {
+                return Err(ClassReadError::UTF8Error(format!("Invalid second header byte in 2x3B UTF string {}", head2)));
+            }
             let y = *iter.next().unwrap() as u32;
             let z = *iter.next().unwrap() as u32;
             ret.push(char::from_u32((z & 0x3F) | (y & 0xF) << 6 | (w & 0x3F) << 10 | (v & 0xF) << 16 | 0x10000).unwrap());
@@ -452,7 +462,7 @@ fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, Clas
 }
 
 pub fn get_classname(filename: &Path) -> Result<String, ClassReadError> {
-    let (reader, ret) = try!(read_up_to_my_class_details(filename));
+    let (_reader, ret) = try!(read_up_to_my_class_details(filename));
     let class_name = try!(get_cp_class_name(&ret.constant_pool, ret.this_class_index));
     return Ok((*class_name).clone());
 }
