@@ -1196,7 +1196,7 @@ fn get_primitive_class(runtime: &mut Runtime, typ: String) -> Result<Variable, R
     }
 
     let var = try!(construct_object(runtime, &"java/lang/Class"));
-    try!(put_field(var.to_ref().unwrap(), &"java/lang/Class", "initted", Variable::Boolean(true)));
+    try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
     let members = &var.to_ref().unwrap().members;
     members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(true));
     members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(false));
@@ -1217,7 +1217,7 @@ fn make_class(runtime: &mut Runtime, class_name: &str) -> Result<Variable, Runne
     let var = try!(construct_object(runtime, &"java/lang/Class"));
     let name_object = try!(make_string(runtime, class_name));
     try!(put_field(var.to_ref().unwrap(), &"java/lang/Class", "name", try!(string_intern(runtime, &name_object))));
-    try!(put_field(var.to_ref().unwrap(), &"java/lang/Class", "initted", Variable::Boolean(true)));
+    try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
     let members = &var.to_ref().unwrap().members;
 
     let subtype = try!(parse_single_type_string(runtime, class_name, true));
@@ -1276,6 +1276,16 @@ fn make_class(runtime: &mut Runtime, class_name: &str) -> Result<Variable, Runne
     runtime.class_objects.insert(String::from(class_name), var.clone());
 
     return Ok(var);
+}
+
+fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    let class_result = try!(load_class(runtime, class_name));
+    let mut statics = class_result.statics.borrow_mut();
+    if !statics.contains_key(field_name) {
+        return Err(RunnerError::ClassNotLoaded(String::from(class_name)));
+    }
+    statics.insert(String::from(field_name), value);
+    return Ok(());
 }
 
 fn put_field(obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
@@ -1653,12 +1663,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let value = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, index));
                 debugPrint!(true, 2, "PUTSTATIC {} {} {} {}", class_name, field_name, typ, value);
-                let class_result = try!(load_class(runtime, class_name.as_str()));
-                let mut statics = class_result.statics.borrow_mut();
-                if !statics.contains_key(&*field_name) {
-                    return Err(RunnerError::ClassNotLoaded((*class_name).clone()));
-                }
-                statics.insert((*field_name).clone(), value);
+                try!(put_static(runtime, class_name.as_str(), field_name.as_str(), value));
             }
             180 => {
                 let field_index = try!(buf.read_u16::<BigEndian>());
@@ -1807,7 +1812,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
 }
 
 fn find_class(name: &str, class_paths: &Vec<String>) -> Result<ClassResult, RunnerError> {
-    let debug = true;
+    let debug = false;
     debugPrint!(debug, 3, "Finding class {}", name);
     for class_path in class_paths.iter() {
         let mut direct_path = class_path.clone();
