@@ -2,6 +2,7 @@ extern crate glob;
 use std::path::Path;
 
 pub mod reader {
+    #[macro_use]
     pub mod class;
     pub mod runner;
 }

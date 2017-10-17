@@ -1,5 +1,3 @@
-#![macro_escape]
-
 #![deny(
 unreachable_code,
 unused_assignments,
