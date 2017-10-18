@@ -33,6 +33,11 @@ use glob::glob;
 
 use self::byteorder::{BigEndian, ReadBytesExt};
 
+macro_rules! runnerPrint {
+    ($runtime:expr, $enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$runtime.previous_frames.len() {print!("|"); } println!($fmt); } }};
+    ($runtime:expr, $enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$runtime.previous_frames.len() {print!("|"); } println!($fmt, $($arg)*); } }};
+}
+
 #[derive(Debug)]
 pub enum RunnerError {
     ClassInvalid(&'static str),
@@ -494,7 +499,7 @@ fn initialise_variable(runtime: &mut Runtime, descriptor_string: &str) -> Result
 
 fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
     let debug = false;
-    debugPrint!(debug, 3, "Constructing object {}", name);
+    runnerPrint!(runtime, debug, 3, "Constructing object {}", name);
     try!(load_class(runtime, name));
 
     let original_class = try!(runtime.classes.get(name).ok_or(RunnerError::ClassInvalid2(format!("Failed to find class {}", name)))).clone();
@@ -503,7 +508,7 @@ fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, Runne
     let mut sub_class : Option<Weak<Object>> = None;
 
     loop {
-        debugPrint!(debug, 3, "Constructing object of type {} with subclass {}", class.name, sub_class.is_some());
+        runnerPrint!(runtime, debug, 3, "Constructing object of type {} with subclass {}", class.name, sub_class.is_some());
         let mut members: HashMap<String, Variable> = HashMap::new();
         for field in &class.cr.fields {
             if field.access_flags & ACC_STATIC != 0 {
@@ -618,7 +623,7 @@ fn string_to_string(obj: &Object) -> String {
 
 fn load<F>(desc: &str, index: u8, runtime: &mut Runtime, _t: F) -> Result<(), RunnerError> { // TODO: Type checking
     let loaded = runtime.current_frame.local_variables[index as usize].clone();
-    debugPrint!(true, 2, "{} {} {}", desc, index, loaded);
+    runnerPrint!(runtime, true, 2, "{} {} {}", desc, index, loaded);
     push_on_stack(&mut runtime.current_frame.operand_stack, loaded);
     return Ok(());
 }
@@ -629,7 +634,7 @@ fn aload<F, G>(desc: &str, runtime: &mut Runtime, _t: F, converter: G) -> Result
     let index = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int();
     let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     let (_array_type, maybe_array) = var.to_arrayref();
-    debugPrint!(true, 2, "{} {} {}", desc, index, var);
+    runnerPrint!(runtime, true, 2, "{} {} {}", desc, index, var);
     if maybe_array.is_none() {
         return Err(RunnerError::NullPointerException);
     }
@@ -647,7 +652,7 @@ fn aload<F, G>(desc: &str, runtime: &mut Runtime, _t: F, converter: G) -> Result
 
 fn store<F>(desc: &str, index: u8, runtime: &mut Runtime, _t: F) -> Result<(), RunnerError> { // TODO: Type checking
     let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    debugPrint!(true, 2, "{}_{} {}", desc, index, popped);
+    runnerPrint!(runtime, true, 2, "{}_{} {}", desc, index, popped);
     while runtime.current_frame.local_variables.len() <= index as usize {
         runtime.current_frame.local_variables.push(Variable::Int(0));
     }
@@ -663,7 +668,7 @@ fn astore<F>(desc: &str, runtime: &mut Runtime, converter: F) -> Result<(), Runn
     let index = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int();
     let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     let (_array_type, maybe_array) = var.to_arrayref();
-    debugPrint!(true, 2, "{} {} {}", desc, index, var);
+    runnerPrint!(runtime, true, 2, "{} {} {}", desc, index, var);
     if maybe_array.is_none() {
         return Err(RunnerError::NullPointerException);
     }
@@ -695,7 +700,7 @@ fn maths_instr<F, G, H, K>(desc: &str, runtime: &mut Runtime, creator: F, extrac
 {
     let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    debugPrint!(true, 2, "{} {} {}", desc, popped1, popped2);
+    runnerPrint!(runtime, true, 2, "{} {} {}", desc, popped1, popped2);
     push_on_stack(&mut runtime.current_frame.operand_stack, creator(operation(extractor(&popped1), extractor(&popped2))));
 }
 
@@ -708,7 +713,7 @@ fn maths_instr_2<F, G, H, I, J, K, L>(desc: &str, runtime: &mut Runtime, creator
 {
     let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    debugPrint!(true, 2, "{} {} {}", desc, popped1, popped2);
+    runnerPrint!(runtime, true, 2, "{} {} {}", desc, popped1, popped2);
     push_on_stack(&mut runtime.current_frame.operand_stack, creator(operation(extractor1(&popped1), extractor2(&popped2))));
 }
 
@@ -719,14 +724,13 @@ fn single_pop_instr<F, G, H, I, J>(desc: &str, runtime: &mut Runtime, creator: F
     H: Fn(I) -> J
 {
     let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    debugPrint!(true, 2, "{} {}", desc, popped);
+    runnerPrint!(runtime, true, 2, "{} {}", desc, popped);
     push_on_stack(&mut runtime.current_frame.operand_stack, creator(operation(extractor(&popped))));
 }
 
 fn vreturn<F, K>(desc: &str, runtime: &mut Runtime, extractor: F) -> Result<(), RunnerError> where F: Fn(&Variable) -> K {
     let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    unsafe {print_level = print_level - 1};
-    debugPrint!(true, 1, "{} {}", desc, popped);
+    runnerPrint!(runtime, true, 1, "{} {}", desc, popped);
     extractor(&popped); // Type check
     runtime.current_frame = runtime.previous_frames.pop().unwrap();
     push_on_stack(&mut runtime.current_frame.operand_stack, popped);
@@ -775,10 +779,9 @@ fn invoke_manual(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, m
     }
     let code = maybe_code.unwrap();
 
-    debugPrint!(true, 1, "INVOKE manual {} {} on {}", method_name, method_descriptor, class.name);
+    runnerPrint!(runtime, true, 1, "INVOKE manual {} {} on {}", method_name, method_descriptor, class.name);
     runtime.previous_frames.push(runtime.current_frame.clone());
     runtime.current_frame = new_frame;
-    unsafe {print_level = print_level + 1};
     try!(do_run_method((class.name.clone() + method_name).as_str(), runtime, &code, 0));
 
     return Ok(());
@@ -828,7 +831,7 @@ fn string_intern(runtime: &mut Runtime, var: &Variable) -> Result<Variable, Runn
 }
 
 fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, runtime: &mut Runtime) -> Result<bool, RunnerError> {
-    debugPrint!(true, 4, "try_builtin {} {} {}", class_name, method_name, descriptor);
+    runnerPrint!(runtime, true, 4, "try_builtin {} {} {}", class_name, method_name, descriptor);
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
         ("java/net/InetAddress", "init", "()V") => {}
         ("java/net/InetAddressImplFactory", "isIPv6Supported", "()Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
@@ -838,20 +841,20 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let obj = args[0].clone().to_ref().unwrap();
             let members = obj.members.borrow();
             let value = members.get(&String::from("__is_array")).unwrap();
-            debugPrint!(true, 2, "BUILTIN: is_array {}", value);
+            runnerPrint!(runtime, true, 2, "BUILTIN: is_array {}", value);
             push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
         }
         ("java/lang/Class", "isPrimitive", "()Z") => {
             let obj = args[0].clone().to_ref().unwrap();
             let members = obj.members.borrow();
             let value = members.get(&String::from("__is_primitive")).unwrap();
-            debugPrint!(true, 2, "BUILTIN: is_primitive {}", value);
+            runnerPrint!(runtime, true, 2, "BUILTIN: is_primitive {}", value);
             push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
         }
         ("java/lang/Class", "getPrimitiveClass", "(Ljava/lang/String;)Ljava/lang/Class;") => {
             let obj = args[0].clone().to_ref().unwrap();
             let string = try!(extract_from_string(&obj));
-            debugPrint!(true, 2, "BUILTIN: getPrimitiveClass {}", string);
+            runnerPrint!(runtime, true, 2, "BUILTIN: getPrimitiveClass {}", string);
             let var = try!(get_primitive_class(runtime, string));
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
@@ -883,7 +886,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
                 } else {
                     try!(construct_object(runtime, &"java/lang/Class"))
                 };
-            debugPrint!(true, 2, "BUILTIN: getComponentType {}", var);
+            runnerPrint!(runtime, true, 2, "BUILTIN: getComponentType {}", var);
 
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         },
@@ -893,13 +896,13 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let initialize = args[1].to_bool();
             let ref class_loader = args[2];
             let ref caller_class = args[3];
-            debugPrint!(true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
+            runnerPrint!(runtime, true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
             let var = try!(make_class(runtime, descriptor.as_str()));
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
         ("java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V") => {
-            debugPrint!(true, 2, "BUILTIN: arrayCopy {} {} {} {} {}", args[0], args[1], args[2], args[3], args[4]);
+            runnerPrint!(runtime, true, 2, "BUILTIN: arrayCopy {} {} {} {} {}", args[0], args[1], args[2], args[3], args[4]);
 
             let (_x, src) = args[0].to_arrayref();
             let src_pos = args[1].to_int();
@@ -923,80 +926,80 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("java/lang/System", "loadLibrary", "(Ljava/lang/String;)V") => {
             let lib_string_obj = args[0].clone().to_ref().unwrap();
             let lib = try!(extract_from_string(&lib_string_obj));
-            debugPrint!(true, 2, "BUILTIN: loadLibrary {}", lib);
+            runnerPrint!(runtime, true, 2, "BUILTIN: loadLibrary {}", lib);
         }
         ("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;") => {
             let obj = args[0].clone().to_ref().unwrap();
             let string = try!(extract_from_string(&obj));
             if runtime.properties.contains_key(&string) {
-                debugPrint!(true, 2, "BUILTIN: getProperty {} valid", string);
+                runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} valid", string);
                 push_on_stack(&mut runtime.current_frame.operand_stack, runtime.properties.get(&string).unwrap().clone());
             } else {
-                debugPrint!(true, 2, "BUILTIN: getProperty {} NULL", string);
+                runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} NULL", string);
                 let null_string = Variable::Reference(try!(load_class(runtime, "java/lang/String")), None);
                 push_on_stack(&mut runtime.current_frame.operand_stack, null_string);
             }
         },
         ("java/lang/Runtime", "availableProcessors", "()I") => {
-            debugPrint!(true, 2, "BUILTIN: availableProcessors");
+            runnerPrint!(runtime, true, 2, "BUILTIN: availableProcessors");
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(1));
         },
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
         ("sun/misc/Unsafe", "registerNatives", "()V") => {return Ok(true)},
         ("sun/misc/Unsafe", "arrayBaseOffset", "(Ljava/lang/Class;)I") => {
-            debugPrint!(true, 2, "BUILTIN: arrayBaseOffset");
+            runnerPrint!(runtime, true, 2, "BUILTIN: arrayBaseOffset");
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(0));
         },
         ("sun/misc/Unsafe", "objectFieldOffset", "(Ljava/lang/reflect/Field;)J") => {
-            debugPrint!(true, 2, "BUILTIN: objectFieldOffset");
+            runnerPrint!(runtime, true, 2, "BUILTIN: objectFieldOffset");
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(0)); // TODO: this is rubbish
         },
         ("sun/misc/Unsafe", "arrayIndexScale", "(Ljava/lang/Class;)I") => {
-            debugPrint!(true, 2, "BUILTIN: arrayIndexScale");
+            runnerPrint!(runtime, true, 2, "BUILTIN: arrayIndexScale");
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(1));
         },
         ("sun/misc/Unsafe", "addressSize", "()I") => {
-            debugPrint!(true, 2, "BUILTIN: addressSize");
+            runnerPrint!(runtime, true, 2, "BUILTIN: addressSize");
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(4));
         },
         ("sun/misc/Unsafe", "pageSize", "()I") => {
-            debugPrint!(true, 2, "BUILTIN: pageSize");
+            runnerPrint!(runtime, true, 2, "BUILTIN: pageSize");
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(4096));
         },
         ("java/lang/String", "intern", "()Ljava/lang/String;") => {
             let interned = try!(string_intern(runtime, &args[0]));
-            debugPrint!(true, 2, "BUILTIN: intern {} {:p}", args[0], &*interned.to_ref().unwrap());
+            runnerPrint!(runtime, true, 2, "BUILTIN: intern {} {:p}", args[0], &*interned.to_ref().unwrap());
             push_on_stack(&mut runtime.current_frame.operand_stack, interned);
         },
         ("java/lang/Float", "floatToRawIntBits", "(F)I") => {
             let float = args[0].to_float();
             let bits = unsafe {std::mem::transmute::<f32, u32>(float)};
-            debugPrint!(true, 2, "BUILTIN: floatToRawIntBits {} {}", float, bits);
+            runnerPrint!(runtime, true, 2, "BUILTIN: floatToRawIntBits {} {}", float, bits);
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(bits as i32));
         },
         ("java/lang/Float", "intBitsToFloat", "(I)F") => {
             let int = args[0].to_int();
             let float = unsafe {std::mem::transmute::<i32, f32>(int)};
-            debugPrint!(true, 2, "BUILTIN: intBitsToFloat {} {}", int, float);
+            runnerPrint!(runtime, true, 2, "BUILTIN: intBitsToFloat {} {}", int, float);
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Float(float));
         },
         ("java/lang/Double", "doubleToRawLongBits", "(D)J") => {
             let double = args[0].to_double();
             let bits = unsafe {std::mem::transmute::<f64, u64>(double)};
-            debugPrint!(true, 2, "BUILTIN: doubleToRawIntBits {} {}", double, bits);
+            runnerPrint!(runtime, true, 2, "BUILTIN: doubleToRawIntBits {} {}", double, bits);
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(bits as i64));
         },
         ("java/lang/Double", "longBitsToDouble", "(J)D") => {
             let long = args[0].to_long();
             let double = unsafe {std::mem::transmute::<i64, f64>(long)};
-            debugPrint!(true, 2, "BUILTIN: doubleToRawIntBits {} {}", long, double);
+            runnerPrint!(runtime, true, 2, "BUILTIN: doubleToRawIntBits {} {}", long, double);
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Double(double));
         },
         ("java/lang/SecurityManager", "checkPermission", "(Ljava/security/Permission;)V") => {
         },
         ("java/security/AccessController", "doPrivileged", "(Ljava/security/PrivilegedAction;)Ljava/lang/Object;") => {
             let action = args[0].clone().to_ref().unwrap();
-            debugPrint!(true, 2, "BUILTIN: doPrivileged {}", action);
+            runnerPrint!(runtime, true, 2, "BUILTIN: doPrivileged {}", action);
             try!(invoke_manual(runtime, action.type_ref.clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
         },
         ("java/security/AccessController", "getStackAccessControlContext", "()Ljava/security/AccessControlContext;") => {
@@ -1008,7 +1011,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let mut s = DefaultHasher::new();
             hash_obj(obj, &mut s);
             let hash = s.finish();
-            debugPrint!(true, 2, "BUILTIN: hashcode {}", hash);
+            runnerPrint!(runtime, true, 2, "BUILTIN: hashcode {}", hash);
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(hash as i32));
         },
         ("java/lang/System", "identityHashCode", "(Ljava/lang/Object;)I") => {
@@ -1016,13 +1019,13 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let mut s = DefaultHasher::new();
             hash_obj(obj, &mut s);
             let hash = s.finish();
-            debugPrint!(true, 2, "BUILTIN: identityHashCode {}", hash);
+            runnerPrint!(runtime, true, 2, "BUILTIN: identityHashCode {}", hash);
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(hash as i32));
         },
         ("java/lang/Object", "getClass", "()Ljava/lang/Class;") => {
             let ref descriptor = generate_variable_descriptor(&args[0]);
             let var = try!(make_class(runtime, descriptor.as_str()));
-            debugPrint!(true, 2, "BUILTIN: getClass {} {}", descriptor, var);
+            runnerPrint!(runtime, true, 2, "BUILTIN: getClass {} {}", descriptor, var);
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         },
         ("java/lang/ClassLoader", "registerNatives", "()V") => {},
@@ -1031,7 +1034,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let obj = args[0].clone().to_ref().unwrap();
             let members = obj.members.borrow();
             let var = members.get(&String::from("__alive")).unwrap_or(&Variable::Boolean(false)).clone();
-            debugPrint!(true, 2, "BUILTIN: isAlive {}", var);
+            runnerPrint!(runtime, true, 2, "BUILTIN: isAlive {}", var);
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         },
         ("java/lang/Thread", "start0", "()V") => {
@@ -1039,13 +1042,13 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         }
         ("java/lang/Thread", "setPriority0", "(I)V") => {
             let obj = args[0].clone().to_ref().unwrap();
-            debugPrint!(true, 2, "BUILTIN: setPriority0 {} {}", args[0], args[1]);
+            runnerPrint!(runtime, true, 2, "BUILTIN: setPriority0 {} {}", args[0], args[1]);
             try!(put_field(obj.clone(), &"java/lang/Thread", &"priority", args[1].clone()));
         }
         ("java/lang/Thread", "currentThread", "()Ljava/lang/Thread;") => {
-            debugPrint!(true, 2, "BUILTIN: currentThread");
+            runnerPrint!(runtime, true, 2, "BUILTIN: currentThread");
             if runtime.current_thread.is_none() {
-                debugPrint!(true, 2, "BUILTIN: currentThread - creating thread");
+                runnerPrint!(runtime, true, 2, "BUILTIN: currentThread - creating thread");
                 let thread_group;
                 {
                     let var = try!(construct_object(runtime, &"java/lang/ThreadGroup"));
@@ -1073,7 +1076,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let class = runtime.previous_frames[runtime.previous_frames.len()-1].class.clone().unwrap();
             let descriptor = String::from("L") + class.name.as_str() + ";";
             let var = try!(make_class(runtime, descriptor.as_str()));
-            debugPrint!(true, 2, "BUILTIN: getCallerClass {}", var);
+            runnerPrint!(runtime, true, 2, "BUILTIN: getCallerClass {}", var);
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         _ => return Ok(false)
@@ -1096,7 +1099,7 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
         let extra_parameter = if with_obj {1} else {0};
         let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
 
-        debugPrint!(debug, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
+        runnerPrint!(runtime, debug, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
 
         if try!(try_builtin(&class_name, &method_name, &descriptor, &new_local_variables, runtime)) {
             return Ok(());
@@ -1141,7 +1144,6 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
 
     }
 
-    unsafe {print_level = print_level + 1};
     runtime.previous_frames.push(runtime.current_frame.clone());
     runtime.current_frame = new_frame.unwrap();
     try!(do_run_method(new_method_name.unwrap().as_str(), runtime, &code.unwrap(), 0));
@@ -1151,7 +1153,7 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
 fn fcmp(desc: &str, runtime: &mut Runtime, is_g: bool) -> Result<(), RunnerError> {
     let pop2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_float();
     let pop1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_float();
-    debugPrint!(true, 2, "{} {} {}", desc, pop1, pop2);
+    runnerPrint!(runtime, true, 2, "{} {} {}", desc, pop1, pop2);
     let ret;
     if pop1.is_nan() || pop2.is_nan() {
         ret = if is_g {1} else {-1}
@@ -1172,10 +1174,10 @@ fn ifcmp<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, cmp: 
     let current_position = buf.position() - 1;
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
     let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    debugPrint!(true, 2, "{} {} {}", desc, popped, branch_offset);
+    runnerPrint!(runtime, true, 2, "{} {} {}", desc, popped, branch_offset);
     if cmp(popped.to_int()) {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
-        debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
+        runnerPrint!(runtime, true, 2, "BRANCHED from {} to {}", current_position, new_position);
         buf.set_position(new_position);
     }
     return Ok(());
@@ -1186,10 +1188,10 @@ fn branch_if<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, c
 {
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
     let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    debugPrint!(true, 2, "{} {} {}", desc, var, branch_offset);
+    runnerPrint!(runtime, true, 2, "{} {} {}", desc, var, branch_offset);
     if cmp(var) {
         let new_pos = (current_position as i64 + branch_offset as i64) as u64;
-        debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_pos);
+        runnerPrint!(runtime, true, 2, "BRANCHED from {} to {}", current_position, new_pos);
         buf.set_position(new_pos);
     }
     return Ok(());
@@ -1350,10 +1352,10 @@ fn icmp<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, cmp: F
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
     let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    debugPrint!(true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
+    runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
     if cmp(popped1.to_int(), popped2.to_int()) {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
-        debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
+        runnerPrint!(runtime, true, 2, "BRANCHED from {} to {}", current_position, new_position);
         buf.set_position(new_position);
     }
     return Ok(());
@@ -1364,7 +1366,7 @@ fn rc_ptr_eq<T: ?Sized>(this: Rc<T>, other: Rc<T>) -> bool
 {
     let this_ptr: *const T = &*this;
     let other_ptr: *const T = &*other;
-    debugPrint!(true, 2, "RC ptr eq {} {:p} {} {:p}", this, this_ptr, other, other_ptr);
+    debugPrint!(false, 2, "RC ptr eq {} {:p} {} {:p}", this, this_ptr, other, other_ptr);
     this_ptr == other_ptr
 }
 
@@ -1372,7 +1374,7 @@ fn cast<F>(desc: &str, runtime: &mut Runtime, mutator: F)
     where F: Fn(&Variable) -> Variable
 {
     let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    debugPrint!(true, 2, "{} {}", desc, popped);
+    runnerPrint!(runtime, true, 2, "{} {}", desc, popped);
     push_on_stack(&mut runtime.current_frame.operand_stack, mutator(&popped));
 }
 
@@ -1382,11 +1384,11 @@ fn ifacmp(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, should_
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
     let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_ref();
     let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_ref();
-    debugPrint!(true, 2, "{} {} {} {}", desc, popped1.is_some(), popped2.is_some(), branch_offset);
+    runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, popped1.is_some(), popped2.is_some(), branch_offset);
     let matching = popped1.is_some() == popped2.is_some() && (popped1.is_none() || rc_ptr_eq(popped1.unwrap(), popped2.unwrap()));
     if should_match == matching {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
-        debugPrint!(true, 2, "BRANCHED from {} to {}", current_position, new_position);
+        runnerPrint!(runtime, true, 2, "BRANCHED from {} to {}", current_position, new_position);
         buf.set_position(new_position);
     }
     return Ok(());
@@ -1395,28 +1397,28 @@ fn ifacmp(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, should_
 fn ldc(runtime: &mut Runtime, index: usize) -> Result<(), RunnerError> {
     let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
     if maybe_cp_entry.is_none() {
-        debugPrint!(true, 1, "LDC failed at index {}", index);
+        runnerPrint!(runtime, true, 1, "LDC failed at index {}", index);
         return Err(RunnerError::ClassInvalid("Error"));
     } else {
         match maybe_cp_entry.as_ref().unwrap() {
             &ConstantPoolItem::CONSTANT_String { index } => {
                 let str = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
-                debugPrint!(true, 2, "LDC string {}", str);
+                runnerPrint!(runtime, true, 2, "LDC string {}", str);
                 let var = try!(make_string(runtime, str.as_str()));
                 push_on_stack(&mut runtime.current_frame.operand_stack, var);
             }
             &ConstantPoolItem::CONSTANT_Class { index } => {
                 let descriptor = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
-                debugPrint!(true, 2, "LDC class {}", descriptor);
+                runnerPrint!(runtime, true, 2, "LDC class {}", descriptor);
                 let var = try!(make_class(runtime, descriptor.as_str()));
                 push_on_stack(&mut runtime.current_frame.operand_stack, var);
             }
             &ConstantPoolItem::CONSTANT_Integer { value } => {
-                debugPrint!(true, 2, "LDC int {}", value as i32);
+                runnerPrint!(runtime, true, 2, "LDC int {}", value as i32);
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(value as i32));
             }
             &ConstantPoolItem::CONSTANT_Float { value } => {
-                debugPrint!(true, 2, "LDC float {}", value as f32);
+                runnerPrint!(runtime, true, 2, "LDC float {}", value as f32);
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Float(value as f32));
             }
             _ => return Err(RunnerError::ClassInvalid2(format!("Unknown constant {:?}", maybe_cp_entry.as_ref().unwrap())))
@@ -1434,37 +1436,37 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
     loop {
         let current_position = buf.position();
         let op_code = try!(buf.read_u8());
-        debugPrint!(true, 3, "{} {} Op code {}", name, runtime.count, op_code);
+        runnerPrint!(runtime, true, 3, "{} {} Op code {}", name, runtime.count, op_code);
         runtime.count+=1;
         match op_code {
             1 => {
-                debugPrint!(true, 2, "ACONST_NULL");
+                runnerPrint!(runtime, true, 2, "ACONST_NULL");
                 // Bit weird, use a random class as the type. Probably need a special case for untyped null?
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Reference(runtime.classes.values().nth(0).unwrap().clone(), None));
             }
             2...8 => {
                 let val = (op_code as i32) - 3;
-                debugPrint!(true, 2, "ICONST {}", val);
+                runnerPrint!(runtime, true, 2, "ICONST {}", val);
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(val));
             }
             9...10 => {
                 let val = (op_code as i64) - 9;
-                debugPrint!(true, 2, "LCONST {}", val);
+                runnerPrint!(runtime, true, 2, "LCONST {}", val);
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(val));
             }
             11...13 => {
                 let val = (op_code - 11) as f32;
-                debugPrint!(true, 2, "FCONST {}", val);
+                runnerPrint!(runtime, true, 2, "FCONST {}", val);
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Float(val));
             }
             16 => {
                 let byte = try!(buf.read_u8()) as i32;
-                debugPrint!(true, 2, "BIPUSH {}", byte);
+                runnerPrint!(runtime, true, 2, "BIPUSH {}", byte);
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(byte));
             }
             17 => {
                 let short = try!(buf.read_u16::<BigEndian>()) as i32;
-                debugPrint!(true, 2, "SIPUSH {}", short);
+                runnerPrint!(runtime, true, 2, "SIPUSH {}", short);
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(short));
             }
             18 => { // LDC
@@ -1479,16 +1481,16 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let index = try!(buf.read_u16::<BigEndian>());
                 let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
                 if maybe_cp_entry.is_none() {
-                    debugPrint!(true, 1, "LDC2W failed at index {}", index);
+                    runnerPrint!(runtime, true, 1, "LDC2W failed at index {}", index);
                     return Err(RunnerError::ClassInvalid("Error"));
                 } else {
                     match maybe_cp_entry.as_ref().unwrap() {
                         &ConstantPoolItem::CONSTANT_Long { value } => {
-                            debugPrint!(true, 2, "LDC2W long {}", value);
+                            runnerPrint!(runtime, true, 2, "LDC2W long {}", value);
                             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(value as i64));
                         }
                         &ConstantPoolItem::CONSTANT_Double { value } => {
-                            debugPrint!(true, 2, "LDC2W double {}", value);
+                            runnerPrint!(runtime, true, 2, "LDC2W double {}", value);
                             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Double(value));
                         }
                         _ => return Err(RunnerError::ClassInvalid2(format!("Invalid constant for LDC2W {:?}", maybe_cp_entry.as_ref().unwrap())))
@@ -1533,33 +1535,33 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
             86 => try!(astore("SASTORE", runtime, |x| Variable::Short(x.to_int() as i16))),
             87 => {
                 let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-                debugPrint!(true, 2, "POP {}", popped);
+                runnerPrint!(runtime, true, 2, "POP {}", popped);
             }
             88 => {
                 let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 if popped.is_type_1() {
                     let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-                    debugPrint!(true, 2, "POP2 {} {}", popped, popped2);
+                    runnerPrint!(runtime, true, 2, "POP2 {} {}", popped, popped2);
                 } else {
-                    debugPrint!(true, 2, "POP2 {}", popped);
+                    runnerPrint!(runtime, true, 2, "POP2 {}", popped);
                 }
             }
             89 => {
                 let stack_len = runtime.current_frame.operand_stack.len();
                 let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
-                debugPrint!(true, 2, "DUP {}", peek);
+                runnerPrint!(runtime, true, 2, "DUP {}", peek);
                 push_on_stack(&mut runtime.current_frame.operand_stack, peek);
             }
             90 => {
                 let stack_len = runtime.current_frame.operand_stack.len();
                 let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
-                debugPrint!(true, 2, "DUP_X1 {}", peek);
+                runnerPrint!(runtime, true, 2, "DUP_X1 {}", peek);
                 runtime.current_frame.operand_stack.insert(stack_len - 2, peek);
             }
             91 => {
                 let stack_len = runtime.current_frame.operand_stack.len();
                 let peek = runtime.current_frame.operand_stack[stack_len - 1].clone();
-                debugPrint!(true, 2, "DUP_X2 {}", peek);
+                runnerPrint!(runtime, true, 2, "DUP_X2 {}", peek);
                 runtime.current_frame.operand_stack.insert(stack_len - 3, peek);
             }
             92 => {
@@ -1567,11 +1569,11 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let peek1 = runtime.current_frame.operand_stack[stack_len - 1].clone();
                 if peek1.is_type_1() {
                     let peek2 = runtime.current_frame.operand_stack[stack_len - 2].clone();
-                    debugPrint!(true, 2, "DUP2 {} {}", peek1, peek2);
+                    runnerPrint!(runtime, true, 2, "DUP2 {} {}", peek1, peek2);
                     push_on_stack(&mut runtime.current_frame.operand_stack, peek2);
                     push_on_stack(&mut runtime.current_frame.operand_stack, peek1);
                 } else {
-                    debugPrint!(true, 2, "DUP2 {}", peek1);
+                    runnerPrint!(runtime, true, 2, "DUP2 {}", peek1);
                     push_on_stack(&mut runtime.current_frame.operand_stack, peek1);
                 }
             }
@@ -1614,7 +1616,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
             132 => {
                 let index = try!(buf.read_u8());
                 let constt = try!(buf.read_u8()) as i8;
-                debugPrint!(true, 2, "IINC {} {}", index, constt);
+                runnerPrint!(runtime, true, 2, "IINC {} {}", index, constt);
                 let old_val = runtime.current_frame.local_variables[index as usize].to_int();
                 runtime.current_frame.local_variables[index as usize] = Variable::Int(old_val + constt as i32);
             }
@@ -1634,7 +1636,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
             148 => {
                 let pop2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_long();
                 let pop1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_long();
-                debugPrint!(true, 2, "LCMP {} {}", pop1, pop2);
+                runnerPrint!(runtime, true, 2, "LCMP {} {}", pop1, pop2);
                 let ret;
                 if pop1 > pop2 {
                     ret = 1;
@@ -1664,7 +1666,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
             167 => {
                 let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
                 let new_pos = (current_position as i64 + branch_offset as i64) as u64;
-                debugPrint!(true, 2, "BRANCH from {} to {}", current_position, new_pos);
+                runnerPrint!(runtime, true, 2, "BRANCH from {} to {}", current_position, new_pos);
                 buf.set_position(new_pos);
             }
             171 => {
@@ -1673,14 +1675,14 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let default = try!(buf.read_u32::<BigEndian>());
                 let npairs = try!(buf.read_u32::<BigEndian>());
                 let value_int = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int();
-                debugPrint!(true, 2, "LOOKUPSWITCH {} {} {}", default, npairs, value_int);
+                runnerPrint!(runtime, true, 2, "LOOKUPSWITCH {} {} {}", default, npairs, value_int);
                 let mut matched = false;
                 for _i in 0..npairs { // TODO: Nonlinear search
                     let match_key = try!(buf.read_u32::<BigEndian>()) as i32;
                     let offset = try!(buf.read_u32::<BigEndian>()) as i32;
                     if match_key == value_int {
                         let new_pos = (current_position as i64 + offset as i64) as u64;
-                        debugPrint!(true, 2, "Matched so BRANCH from {} to {}", current_position, new_pos);
+                        runnerPrint!(runtime, true, 2, "Matched so BRANCH from {} to {}", current_position, new_pos);
                         buf.set_position(new_pos);
                         matched = true;
                         break;
@@ -1688,7 +1690,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 }
                 if matched == false {
                     let new_pos = (current_position as i64 + default as i64) as u64;
-                    debugPrint!(true, 2, "No match so BRANCH from {} to {}", current_position, new_pos);
+                    runnerPrint!(runtime, true, 2, "No match so BRANCH from {} to {}", current_position, new_pos);
                     buf.set_position(new_pos);
                 }
             }
@@ -1698,15 +1700,14 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
             175 => { return vreturn("DRETURN", runtime, Variable::to_double); }
             176 => { return vreturn("ARETURN", runtime, Variable::is_ref_or_array); }
             177 => { // return
-                unsafe {print_level = print_level - 1};
-                debugPrint!(true, 1, "RETURN");
+                runnerPrint!(runtime, true, 1, "RETURN");
                 runtime.current_frame = runtime.previous_frames.pop().unwrap();
                 return Ok(());
             }
             178 => { // getstatic
                 let index = try!(buf.read_u16::<BigEndian>());
                 let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, index));
-                debugPrint!(true, 2, "GETSTATIC {} {} {}", class_name, field_name, typ);
+                runnerPrint!(runtime, true, 2, "GETSTATIC {} {} {}", class_name, field_name, typ);
                 let mut class_result = try!(load_class(runtime, class_name.as_str()));
                 loop {
                     {
@@ -1728,7 +1729,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let index = try!(buf.read_u16::<BigEndian>());
                 let value = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, index));
-                debugPrint!(true, 2, "PUTSTATIC {} {} {} {}", class_name, field_name, typ, value);
+                runnerPrint!(runtime, true, 2, "PUTSTATIC {} {} {} {}", class_name, field_name, typ, value);
                 try!(put_static(runtime, class_name.as_str(), field_name.as_str(), value));
             }
             180 => {
@@ -1736,7 +1737,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
-                debugPrint!(true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}'", class_name, field_name, typ, obj);
+                runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}'", class_name, field_name, typ, obj);
                 let f = try!(get_field(&obj, class_name.as_str(), field_name.as_str()));
                 push_on_stack(&mut runtime.current_frame.operand_stack, f);
             }
@@ -1746,7 +1747,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let value = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
-                debugPrint!(true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj, value);
+                runnerPrint!(runtime, true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj, value);
                 try!(put_field(obj, class_name.as_str(), field_name.as_str(), value));
             }
             182 => {
@@ -1770,14 +1771,14 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
             187 => {
                 let index = try!(buf.read_u16::<BigEndian>());
                 let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
-                debugPrint!(true, 2, "NEW {}", class_name);
+                runnerPrint!(runtime, true, 2, "NEW {}", class_name);
                 let var = try!(construct_object(runtime, class_name.as_str()));
                 push_on_stack(&mut runtime.current_frame.operand_stack, var);
             }
             188 => {
                 let atype = try!(buf.read_u8());
                 let count = try!(pop_from_stack(&mut runtime.current_frame.operand_stack).ok_or(RunnerError::ClassInvalid("NEWARRAY POP fail"))).to_int();
-                debugPrint!(true, 2, "NEWARRAY {} {}", atype, count);
+                runnerPrint!(runtime, true, 2, "NEWARRAY {} {}", atype, count);
                 let mut v : Vec<Variable> = Vec::new();
                 for _c in 0..count {
                     v.push(
@@ -1801,7 +1802,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 try!(load_class(runtime, class_name.as_str()));
                 let class = runtime.classes.get(&*class_name).unwrap();
                 let count = try!(pop_from_stack(&mut runtime.current_frame.operand_stack).ok_or(RunnerError::ClassInvalid("ANEWARRAY count fail"))).to_int();
-                debugPrint!(true, 2, "ANEWARRAY {} {}", class_name, count);
+                runnerPrint!(runtime, true, 2, "ANEWARRAY {} {}", class_name, count);
                 let mut v : Vec<Variable> = Vec::new();
                 for _c in 0..count {
                     v.push(Variable::Reference(class.clone(), None));
@@ -1815,18 +1816,18 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                     return Err(RunnerError::NullPointerException);
                 }
                 let len = array.as_ref().unwrap().borrow().len();
-                debugPrint!(true, 2, "ARRAYLEN {} {} {}", var, typee, len);
+                runnerPrint!(runtime, true, 2, "ARRAYLEN {} {} {}", var, typee, len);
                 push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(len as i32));
             }
             192 => {
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let index = try!(buf.read_u16::<BigEndian>());
 
-                debugPrint!(true, 2, "CHECKCAST {} {}", var, index);
+                runnerPrint!(runtime, true, 2, "CHECKCAST {} {}", var, index);
 
                 let maybe_cp_entry = runtime.current_frame.constant_pool.get(&index);
                 if maybe_cp_entry.is_none() {
-                    debugPrint!(true, 1, "Missing CP class {}", index);
+                    runnerPrint!(runtime, true, 1, "Missing CP class {}", index);
                     return Err(RunnerError::ClassInvalid("Error"));
                 } else {
                     // TODO: CHECKCAST (noop)
@@ -1838,7 +1839,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let index = try!(buf.read_u16::<BigEndian>());
                 let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
 
-                debugPrint!(true, 2, "INSTANCEOF {} {}", var, class_name);
+                runnerPrint!(runtime, true, 2, "INSTANCEOF {} {}", var, class_name);
 
                 let var_ref = var.to_ref();
                 let mut matches = false;
@@ -1858,17 +1859,17 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
             }
             194 => {
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-                debugPrint!(true, 2, "MONITORENTER {}", var);
+                runnerPrint!(runtime, true, 2, "MONITORENTER {}", var);
                 let _obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
                 // TODO: Implement monitor
-                debugPrint!(true, 1, "WARNING: MonitorEnter not implemented");
+                runnerPrint!(runtime, true, 1, "WARNING: MonitorEnter not implemented");
             },
             195 => {
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-                debugPrint!(true, 2, "MONITOREXIT {}", var);
+                runnerPrint!(runtime, true, 2, "MONITOREXIT {}", var);
                 let _obj = try!(try!(get_obj_instance_from_variable(&var)).ok_or(RunnerError::NullPointerException));
                 // TODO: Implement monitor
-                debugPrint!(true, 1, "WARNING: MonitorExit not implemented");
+                runnerPrint!(runtime, true, 1, "WARNING: MonitorExit not implemented");
             },
             198 => try!(branch_if("IFNULL", runtime, &mut buf, current_position, |x| x.is_null())),
             199 => try!(branch_if("IFNONNULL", runtime, &mut buf, current_position, |x| !x.is_null())),
@@ -1877,21 +1878,21 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
     }
 }
 
-fn find_class(base_name: &str, class_paths: &Vec<String>) -> Result<ClassResult, RunnerError> {
+fn find_class(runtime: &mut Runtime, base_name: &str) -> Result<ClassResult, RunnerError> {
     let debug = false;
     let mut name = String::from(base_name);
     name = name.replace('.', "/");
-    debugPrint!(debug, 3, "Finding class {}", name);
-    for class_path in class_paths.iter() {
+    runnerPrint!(runtime, debug, 3, "Finding class {}", name);
+    for class_path in runtime.class_paths.iter() {
         let mut direct_path = PathBuf::from(class_path);
         for sub in name.split('/') {
             direct_path.push(sub)
         }
         direct_path.set_extension("class");
-        debugPrint!(debug, 3, "Trying path {}", direct_path.display());
+        runnerPrint!(runtime, debug, 3, "Trying path {}", direct_path.display());
         let direct_classname = get_classname(direct_path.as_path());
         if direct_classname.is_ok() && *direct_classname.as_ref().unwrap() == name {
-            debugPrint!(debug, 3, "Name matched for {}", name);
+            runnerPrint!(runtime, debug, 3, "Name matched for {}", name);
             let maybe_read = read(Path::new(&direct_path));
             if maybe_read.is_ok() {
                 return Ok(maybe_read.unwrap());
@@ -1899,7 +1900,7 @@ fn find_class(base_name: &str, class_paths: &Vec<String>) -> Result<ClassResult,
         }
 
         if false {
-            debugPrint!(debug, 3, "Finding class {} direct load failed ({}), searching {}",
+            runnerPrint!(runtime, debug, 3, "Finding class {} direct load failed ({}), searching {}",
                 name, match &direct_classname {
                     &Ok(ref x) => x.clone(),
                     &Err(ref y) => format!("{:?}", y),
@@ -1910,7 +1911,7 @@ fn find_class(base_name: &str, class_paths: &Vec<String>) -> Result<ClassResult,
             glob_path.push_str("/**/*.class");
             let maybe_glob = glob(glob_path.as_str());
             if maybe_glob.is_err() {
-                debugPrint!(true, 1, "Error globbing class path {}", class_path);
+                runnerPrint!(runtime, true, 1, "Error globbing class path {}", class_path);
                 continue;
             }
 
@@ -1923,19 +1924,19 @@ fn find_class(base_name: &str, class_paths: &Vec<String>) -> Result<ClassResult,
                 .nth(0);
 
             if class_match.is_none() {
-                debugPrint!(debug, 2, "Could not find {} on class path {}", name, class_path);
+                runnerPrint!(runtime, debug, 2, "Could not find {} on class path {}", name, class_path);
                 continue;
             }
 
             let maybe_read = read(&class_match.unwrap());
             if maybe_read.is_err() {
-                debugPrint!(true, 1, "Error reading class {} on class path {}", name, class_path);
+                runnerPrint!(runtime, true, 1, "Error reading class {} on class path {}", name, class_path);
                 continue;
             }
 
             return Ok(maybe_read.unwrap());
         } else {
-            debugPrint!(debug, 2, "Could not find {} on class path {} (Error {:?})", name, class_path, direct_classname);
+            runnerPrint!(runtime, debug, 2, "Could not find {} on class path {} (Error {:?})", name, class_path, direct_classname);
             continue;
         }
     }
@@ -1951,8 +1952,8 @@ fn load_class(runtime: &mut Runtime, name: &str) -> Result<Rc<Class>, RunnerErro
             return Ok(x);
         }
     }
-    debugPrint!(true, 2, "Finding class {} not already loaded", name);
-    let class_result = try!(find_class(name, &runtime.class_paths));
+    runnerPrint!(runtime, true, 2, "Finding class {} not already loaded", name);
+    let class_result = try!(find_class(runtime,name));
     let class_obj = try!(bootstrap_class_and_dependencies(runtime, name, &class_result));
 
     return Ok(class_obj);
@@ -1966,14 +1967,14 @@ fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_res
     let new_class = Rc::new(Class::new(&String::from(name), class_result));
     runtime.classes.insert(String::from(name), new_class.clone());
     classes_to_process.push(new_class);
-    debugPrint!(debug, 1, "Bootstrapping {}", name);
+    runnerPrint!(runtime, debug, 1, "Bootstrapping {}", name);
     try!(find_unresolved_class_dependencies(runtime, &mut unresolved_classes, class_result));
 
     while unresolved_classes.len() > 0 {
         let class_to_resolve = unresolved_classes.pop().unwrap().clone();
         if !runtime.classes.contains_key(&class_to_resolve) {
-            debugPrint!(debug, 2, "Finding unresolved dependencies in class {}", class_to_resolve);
-            let class_result_to_resolve = try!(find_class(&class_to_resolve, &runtime.class_paths));
+            runnerPrint!(runtime, debug, 2, "Finding unresolved dependencies in class {}", class_to_resolve);
+            let class_result_to_resolve = try!(find_class(runtime,&class_to_resolve));
             let new_class = Rc::new(Class::new(&class_to_resolve, &class_result_to_resolve));
             runtime.classes.insert(class_to_resolve, new_class.clone());
             classes_to_process.push(new_class);
@@ -1987,7 +1988,7 @@ fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_res
 
     let my_class = runtime.classes.get(&String::from(name)).unwrap().clone();
     try!(initialise_class_stage_2(runtime, &my_class));
-    debugPrint!(debug, 1, "Bootstrap totally complete on {}", name);
+    runnerPrint!(runtime, debug, 1, "Bootstrap totally complete on {}", name);
     return Ok(my_class);
 }
 
@@ -1997,12 +1998,12 @@ fn find_unresolved_class_dependencies(runtime: &mut Runtime, unresolved_classes:
         let name_string = try!(get_cp_str(&class_result.constant_pool, field.name_index));
         let descriptor_string = try!(get_cp_str(&class_result.constant_pool, field.descriptor_index));
 
-        debugPrint!(debug, 3, "Checking field {} {}", name_string, descriptor_string);
+        runnerPrint!(runtime, debug, 3, "Checking field {} {}", name_string, descriptor_string);
 
         let variable = try!(parse_single_type_string(runtime, descriptor_string.as_str(), false));
         match variable {
             Variable::UnresolvedReference(ref type_string) => {
-                debugPrint!(debug, 3, "Class {} is unresolved", type_string);
+                runnerPrint!(runtime, debug, 3, "Class {} is unresolved", type_string);
                 unresolved_classes.push(type_string.clone());
             },
             _ => {}
@@ -2026,7 +2027,7 @@ fn initialise_class_stage_1(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
     if *class.initialising.borrow() || *class.initialised.borrow() {
         return Ok(());
     }
-    debugPrint!(debug, 2, "Initialising class stage 1 {}", class.name);
+    runnerPrint!(runtime, debug, 2, "Initialising class stage 1 {}", class.name);
 
     for field in &class.cr.fields {
         if field.access_flags & ACC_STATIC == 0 {
@@ -2036,7 +2037,7 @@ fn initialise_class_stage_1(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
         let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
         let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
 
-        debugPrint!(debug, 3, "Constructing class static member {} {}", name_string, descriptor_string);
+        runnerPrint!(runtime, debug, 3, "Constructing class static member {} {}", name_string, descriptor_string);
 
         let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
 
@@ -2044,11 +2045,11 @@ fn initialise_class_stage_1(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
     }
     if class.cr.super_class_index > 0 {
         let super_class_name = try!(get_cp_class(&class.cr.constant_pool, class.cr.super_class_index));
-        debugPrint!(debug, 3, "Class {} has superclass {}", class.name, super_class_name);
+        runnerPrint!(runtime, debug, 3, "Class {} has superclass {}", class.name, super_class_name);
         *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&*super_class_name).ok_or(RunnerError::ClassInvalid("Error"))).clone());
     } else {
         if class.name != "java/lang/Object" {
-            debugPrint!(debug, 3, "Class {} has superclass {}", class.name, "java/lang/Object");
+            runnerPrint!(runtime, debug, 3, "Class {} has superclass {}", class.name, "java/lang/Object");
             *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid("Error"))).clone());
         }
     }
@@ -2059,7 +2060,7 @@ fn initialise_class_stage_2(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
     if *class.initialising.borrow() || *class.initialised.borrow() {
         return Ok(());
     }
-    debugPrint!(true, 2, "Initialising class stage 2 {}", class.name);
+    runnerPrint!(runtime, true, 2, "Initialising class stage 2 {}", class.name);
 
     *class.initialising.borrow_mut() = true;
     try!(invoke_manual(runtime, class.clone(), Vec::new(), "<clinit>", "()V", true));
@@ -2115,7 +2116,7 @@ fn parse_single_type_string(runtime: &mut Runtime, string: &str, resolve: bool) 
     let mut maybe_type_specifier = iter.next();
 
     if maybe_type_specifier.is_none() {
-        debugPrint!(true, 2, "Type specifier blank");
+        runnerPrint!(runtime, true, 2, "Type specifier blank");
         return Err(RunnerError::ClassInvalid("Error"));
     }
 
@@ -2126,7 +2127,7 @@ fn parse_single_type_string(runtime: &mut Runtime, string: &str, resolve: bool) 
     }
 
     if maybe_type_specifier.is_none() {
-        debugPrint!(true, 2, "Type specifier invalid {}", string);
+        runnerPrint!(runtime, true, 2, "Type specifier invalid {}", string);
         return Err(RunnerError::ClassInvalid("Error"));
     }
 
@@ -2176,7 +2177,7 @@ fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Ve
     let mut iter = string.chars().peekable();
 
     if iter.next().unwrap_or(' ') != '(' {
-        debugPrint!(true, 2, "Type {} invalid", string);
+        runnerPrint!(runtime, true, 2, "Type {} invalid", string);
         return Err(RunnerError::ClassInvalid("Error"));
     }
 
@@ -2193,17 +2194,17 @@ fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Ve
         if type_char == 'L' {
             type_string.push_str(iter.by_ref().take_while(|x| *x != ';').collect::<String>().as_str());
         }
-        debugPrint!(debug, 3, "Found parameter {}", type_string);
+        runnerPrint!(runtime, debug, 3, "Found parameter {}", type_string);
         let param = try!(parse_single_type_string(runtime, type_string.as_str(), false));
         if !param.is_type_1() {
             parameters.push(param.clone());
         }
         parameters.push(param);
-        debugPrint!(debug, 3, "Parameters now {:?}", parameters);
+        runnerPrint!(runtime, debug, 3, "Parameters now {:?}", parameters);
     }
 
     let return_type_string : String = iter.collect();
-    debugPrint!(debug, 3, "Return type {}", return_type_string);
+    runnerPrint!(runtime, debug, 3, "Return type {}", return_type_string);
     if return_type_string == "V" {
         return Ok((parameters, None));
     } else {
@@ -2213,7 +2214,6 @@ fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Ve
 
 pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
     println!("Running");
-    unsafe {print_level = 1;}
     let mut runtime = Runtime::new(class_paths.clone(), class.constant_pool.clone());
 
     try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
@@ -2227,7 +2227,6 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
 
 pub fn run_method(class_paths: &Vec<String>, class_result: &ClassResult, method: &str, arguments: &Vec<Variable>, return_type: Option<&Variable>) -> Result<Variable, RunnerError> {
     println!("Running method {} with {} arguments", method, arguments.len());
-    unsafe {print_level = 1;}
     let mut runtime = Runtime::new(class_paths.clone(), class_result.constant_pool.clone());
 
     let name = try!(class_result.name());
@@ -2251,7 +2250,7 @@ pub fn run_method(class_paths: &Vec<String>, class_result: &ClassResult, method:
     }
 
     let method_descriptor = generate_method_descriptor(&arguments, return_type, true);
-    debugPrint!(true, 1, "Finding method {} with descriptor {}", method, method_descriptor);
+    runnerPrint!(runtime, true, 1, "Finding method {} with descriptor {}", method, method_descriptor);
     let code = try!(get_class_method_code(class_result, method, method_descriptor.as_str()));
 
     println!("Running method");
