@@ -725,6 +725,7 @@ fn single_pop_instr<F, G, H, I, J>(desc: &str, runtime: &mut Runtime, creator: F
 
 fn vreturn<F, K>(desc: &str, runtime: &mut Runtime, extractor: F) -> Result<(), RunnerError> where F: Fn(&Variable) -> K {
     let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    unsafe {print_level = print_level - 1};
     debugPrint!(true, 1, "{} {}", desc, popped);
     extractor(&popped); // Type check
     runtime.current_frame = runtime.previous_frames.pop().unwrap();
@@ -774,9 +775,10 @@ fn invoke_manual(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, m
     }
     let code = maybe_code.unwrap();
 
-    debugPrint!(true, 3, "Invoking manually {} {} on {}", method_name, method_descriptor, class.name);
+    debugPrint!(true, 1, "INVOKE manual {} {} on {}", method_name, method_descriptor, class.name);
     runtime.previous_frames.push(runtime.current_frame.clone());
     runtime.current_frame = new_frame;
+    unsafe {print_level = print_level + 1};
     try!(do_run_method((class.name.clone() + method_name).as_str(), runtime, &code, 0));
 
     return Ok(());
@@ -826,7 +828,7 @@ fn string_intern(runtime: &mut Runtime, var: &Variable) -> Result<Variable, Runn
 }
 
 fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, runtime: &mut Runtime) -> Result<bool, RunnerError> {
-    debugPrint!(true, 1, "try_builtin {} {} {}", class_name, method_name, descriptor);
+    debugPrint!(true, 4, "try_builtin {} {} {}", class_name, method_name, descriptor);
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
         ("java/net/InetAddress", "init", "()V") => {}
         ("java/net/InetAddressImplFactory", "isIPv6Supported", "()Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
@@ -1081,7 +1083,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
 
 
 fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special: bool) -> Result<(), RunnerError> {
-    let debug = false;
+    let debug = true;
     let mut code : Option<Code>;
     let new_frame : Option<Frame>;
     let new_method_name : Option<String>;
@@ -1139,6 +1141,7 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
 
     }
 
+    unsafe {print_level = print_level + 1};
     runtime.previous_frames.push(runtime.current_frame.clone());
     runtime.current_frame = new_frame.unwrap();
     try!(do_run_method(new_method_name.unwrap().as_str(), runtime, &code.unwrap(), 0));
@@ -1670,6 +1673,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
             175 => { return vreturn("DRETURN", runtime, Variable::to_double); }
             176 => { return vreturn("ARETURN", runtime, Variable::is_ref_or_array); }
             177 => { // return
+                unsafe {print_level = print_level - 1};
                 debugPrint!(true, 1, "RETURN");
                 runtime.current_frame = runtime.previous_frames.pop().unwrap();
                 return Ok(());
@@ -2184,6 +2188,7 @@ fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Ve
 
 pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
     println!("Running");
+    unsafe {print_level = 1;}
     let mut runtime = Runtime::new(class_paths.clone(), class.constant_pool.clone());
 
     try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
@@ -2197,6 +2202,7 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
 
 pub fn run_method(class_paths: &Vec<String>, class_result: &ClassResult, method: &str, arguments: &Vec<Variable>, return_type: Option<&Variable>) -> Result<Variable, RunnerError> {
     println!("Running method {} with {} arguments", method, arguments.len());
+    unsafe {print_level = 1;}
     let mut runtime = Runtime::new(class_paths.clone(), class_result.constant_pool.clone());
 
     let name = try!(class_result.name());
