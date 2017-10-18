@@ -8,7 +8,7 @@ pub mod reader {
 }
 
 fn get_class_paths() -> Vec<String> {
-    return vec!(String::from("./rt/"), String::from("./javart/"));
+    return vec!(String::from("./javart/"));
 }
 
 pub fn run(filename: &Path) {

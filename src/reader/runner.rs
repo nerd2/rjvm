@@ -896,6 +896,28 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
+        ("java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V") => {
+            debugPrint!(true, 2, "BUILTIN: arrayCopy {} {} {} {} {}", args[0], args[1], args[2], args[3], args[4]);
+
+            let (_x, src) = args[0].to_arrayref();
+            let src_pos = args[1].to_int();
+            let (_x, dest) = args[2].to_arrayref();
+            let dest_pos = args[3].to_int();
+            let length = args[4].to_int();
+
+            if src.is_none() || dest.is_none() {
+                // TODO
+                return Err(RunnerError::NullPointerException);
+            }
+
+            let src_data = src.as_ref().unwrap().borrow();
+            let mut dest_data = dest.as_ref().unwrap().borrow_mut();
+
+            for n in 0..length {
+                dest_data[(dest_pos + n) as usize] = src_data[(src_pos + n) as usize].clone();
+            }
+        },
+        ("java/lang/System", "registerNatives", "()V") => {},
         ("java/lang/System", "loadLibrary", "(Ljava/lang/String;)V") => {
             let lib_string_obj = args[0].clone().to_ref().unwrap();
             let lib = try!(extract_from_string(&lib_string_obj));
