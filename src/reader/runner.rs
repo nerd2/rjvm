@@ -1667,6 +1667,31 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 debugPrint!(true, 2, "BRANCH from {} to {}", current_position, new_pos);
                 buf.set_position(new_pos);
             }
+            171 => {
+                let pos = buf.position();
+                buf.set_position((pos + 3) & !3);
+                let default = try!(buf.read_u32::<BigEndian>());
+                let npairs = try!(buf.read_u32::<BigEndian>());
+                let value_int = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int();
+                debugPrint!(true, 2, "LOOKUPSWITCH {} {} {}", default, npairs, value_int);
+                let mut matched = false;
+                for _i in 0..npairs { // TODO: Nonlinear search
+                    let match_key = try!(buf.read_u32::<BigEndian>()) as i32;
+                    let offset = try!(buf.read_u32::<BigEndian>()) as i32;
+                    if match_key == value_int {
+                        let new_pos = (current_position as i64 + offset as i64) as u64;
+                        debugPrint!(true, 2, "Matched so BRANCH from {} to {}", current_position, new_pos);
+                        buf.set_position(new_pos);
+                        matched = true;
+                        break;
+                    }
+                }
+                if matched == false {
+                    let new_pos = (current_position as i64 + default as i64) as u64;
+                    debugPrint!(true, 2, "No match so BRANCH from {} to {}", current_position, new_pos);
+                    buf.set_position(new_pos);
+                }
+            }
             172 => { return vreturn("IRETURN", runtime, Variable::can_convert_to_int); }
             173 => { return vreturn("LRETURN", runtime, Variable::to_long); }
             174 => { return vreturn("FRETURN", runtime, Variable::to_float); }

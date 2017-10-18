@@ -44,6 +44,14 @@ mod tests {
     }
 
     #[test]
+    fn lookupswitch() {
+        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('a')), Some(&Variable::Boolean(false)), &Vec::new()), Variable::Int(0));
+        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('.')), Some(&Variable::Boolean(false)), &Vec::new()), Variable::Int(1));
+        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('>')), Some(&Variable::Boolean(false)), &Vec::new()), Variable::Int(1));
+        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char(' ')), Some(&Variable::Boolean(false)), &Vec::new()), Variable::Int(0));
+    }
+
+    #[test]
     fn string_basics() {
         assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Int('a' as i32));
         assert_eq!(run_method(Path::new("tests/string.class"), "copy", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Int('o' as i32));
