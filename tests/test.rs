@@ -44,9 +44,9 @@ mod tests {
     }
 
     #[test]
-    fn string() {
-        assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Char('a'));
-        assert_eq!(run_method(Path::new("tests/string.class"), "copy", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Char('o'));
+    fn string_basics() {
+        assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Int('a' as i32));
+        assert_eq!(run_method(Path::new("tests/string.class"), "copy", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Int('o' as i32));
         assert_eq!(run_method(Path::new("tests/string.class"), "getBytes", &Vec::new(), Some(&Variable::Byte(0)), &Vec::new()), Variable::Byte('e' as u8));
         assert_eq!(run_method(Path::new("tests/string.class"), "getHashCode", &Vec::new(), Some(&Variable::Int(0)), &Vec::new()), Variable::Int(2));
     }

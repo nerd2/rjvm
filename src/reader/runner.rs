@@ -1,8 +1,10 @@
 #![deny(
+    non_snake_case,
     unreachable_code,
     unused_assignments,
     unused_imports,
     unused_variables,
+    unused_mut,
 )]
 
 extern crate byteorder;
@@ -26,6 +28,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::rc::Weak;
 use std::path::Path;
+use std::path::PathBuf;
 use glob::glob;
 
 use self::byteorder::{BigEndian, ReadBytesExt};
@@ -278,8 +281,11 @@ impl fmt::Display for Variable {
              },
              &Variable::ArrayReference(ref vtype, ref maybe_ref) => {
                  if maybe_ref.is_some() {
-                     write!(f, "ArrayReference ({})",
-                            maybe_ref.as_ref().unwrap().borrow().iter()
+                     let vec = maybe_ref.as_ref().unwrap().borrow();
+                     write!(f, "ArrayReference Size:{} ({})",
+                        vec.len(),
+                        vec.iter()
+                                .take(10)
                                 .map(|y| format!("{}", y))
                                 .fold(String::new(), |a, b| (a + ", " + b.as_str())))
                  } else {
@@ -822,16 +828,18 @@ fn string_intern(runtime: &mut Runtime, var: &Variable) -> Result<Variable, Runn
 fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, runtime: &mut Runtime) -> Result<bool, RunnerError> {
     debugPrint!(true, 1, "try_builtin {} {} {}", class_name, method_name, descriptor);
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
+        ("java/net/InetAddress", "init", "()V") => {}
+        ("java/net/InetAddressImplFactory", "isIPv6Supported", "()Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
         ("java/util/concurrent/atomic/AtomicLong", "VMSupportsCS8", "()Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
         ("java/lang/Class", "registerNatives", "()V") => {}
-        ("java/lang/Class", "is_array", "()Z") => {
+        ("java/lang/Class", "isArray", "()Z") => {
             let obj = args[0].clone().to_ref().unwrap();
             let members = obj.members.borrow();
             let value = members.get(&String::from("__is_array")).unwrap();
             debugPrint!(true, 2, "BUILTIN: is_array {}", value);
             push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
         }
-        ("java/lang/Class", "is_primitive", "()Z") => {
+        ("java/lang/Class", "isPrimitive", "()Z") => {
             let obj = args[0].clone().to_ref().unwrap();
             let members = obj.members.borrow();
             let value = members.get(&String::from("__is_primitive")).unwrap();
@@ -867,8 +875,8 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
                     if is_primitive {
                         args[0].clone() // TODO: this is rubbish
                     } else {
-                        let component_class = class_object_1.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
-                        try!(make_class(runtime, component_class.name.as_str()))
+                        let component_class_descriptor = generate_variable_descriptor(class_object_1.members.borrow().get(&String::from("__class")).unwrap());
+                        try!(make_class(runtime, component_class_descriptor.as_str()))
                     }
                 } else {
                     try!(construct_object(runtime, &"java/lang/Class"))
@@ -878,16 +886,21 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         },
         ("java/lang/Class", "forName0", "(Ljava/lang/String;ZLjava/lang/ClassLoader;Ljava/lang/Class;)Ljava/lang/Class;") => {
-            let class_name_string_obj = args[0].clone().to_ref().unwrap();
-            let class_name = try!(extract_from_string(&class_name_string_obj));
+            let descriptor_string_obj = args[0].clone().to_ref().unwrap();
+            let descriptor = try!(extract_from_string(&descriptor_string_obj));
             let initialize = args[1].to_bool();
             let ref class_loader = args[2];
             let ref caller_class = args[3];
-            debugPrint!(true, 2, "BUILTIN: forName0 {} {} {} {}", class_name, initialize, class_loader, caller_class);
-            let var = try!(make_class(runtime, class_name.as_str()));
+            debugPrint!(true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
+            let var = try!(make_class(runtime, descriptor.as_str()));
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
+        ("java/lang/System", "loadLibrary", "(Ljava/lang/String;)V") => {
+            let lib_string_obj = args[0].clone().to_ref().unwrap();
+            let lib = try!(extract_from_string(&lib_string_obj));
+            debugPrint!(true, 2, "BUILTIN: loadLibrary {}", lib);
+        }
         ("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;") => {
             let obj = args[0].clone().to_ref().unwrap();
             let string = try!(extract_from_string(&obj));
@@ -983,9 +996,9 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(hash as i32));
         },
         ("java/lang/Object", "getClass", "()Ljava/lang/Class;") => {
-            let ref name = args[0].clone().to_ref_type().name;
-            let var = try!(make_class(runtime, name.as_str()));
-            debugPrint!(true, 2, "BUILTIN: getClass {} {}", name, var);
+            let ref descriptor = generate_variable_descriptor(&args[0]);
+            let var = try!(make_class(runtime, descriptor.as_str()));
+            debugPrint!(true, 2, "BUILTIN: getClass {} {}", descriptor, var);
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         },
         ("java/lang/ClassLoader", "registerNatives", "()V") => {},
@@ -1022,10 +1035,11 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
 
                     runtime.current_thread = Some(var.clone());
                     let obj = try!(var.to_ref().ok_or(RunnerError::NullPointerException));
-                    try!(put_field(obj.clone(), &"java/lang/Thread", &"name", try!(make_string(runtime, &"thread"))));
-                    try!(put_field(obj.clone(), &"java/lang/Thread", &"priority", Variable::Int(1)));
-                    try!(put_field(obj.clone(), &"java/lang/Thread", &"group", thread_group));
-                    try!(put_field(obj.clone(), &"java/lang/Thread", &"__alive", Variable::Boolean(true)));
+                    let mut members = obj.members.borrow_mut();
+                    members.insert(String::from("name"), try!(make_string(runtime, &"thread")));
+                    members.insert(String::from("priority"), Variable::Int(1));
+                    members.insert(String::from("group"), thread_group);
+                    members.insert(String::from("__alive"), Variable::Boolean(true));
                 }
             }
             push_on_stack(&mut runtime.current_frame.operand_stack, runtime.current_thread.as_ref().unwrap().clone());
@@ -1033,8 +1047,8 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("sun/misc/VM", "initialize", "()V") => {}
         ("sun/reflect/Reflection", "getCallerClass", "()Ljava/lang/Class;") => {
             let class = runtime.previous_frames[runtime.previous_frames.len()-1].class.clone().unwrap();
-            let name = class.name.as_str();
-            let var = try!(make_class(runtime, name));
+            let descriptor = String::from("L") + class.name.as_str() + ";";
+            let var = try!(make_class(runtime, descriptor.as_str()));
             debugPrint!(true, 2, "BUILTIN: getCallerClass {}", var);
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
@@ -1164,7 +1178,7 @@ fn make_string(runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerError
 }
 
 fn make_field(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, _access: u16)  -> Result<Variable, RunnerError> {
-    let class_name = &"java/lang/reflect/Field";
+    let class_name = "java/lang/reflect/Field";
     let name_var = try!(make_string(runtime, name.as_str()));
     let name_var_interned = try!(string_intern(runtime, &name_var));
     let signature_var = try!(make_string(runtime, descriptor.as_str()));
@@ -1205,22 +1219,25 @@ fn get_primitive_class(runtime: &mut Runtime, typ: String) -> Result<Variable, R
     return Ok(var);
 }
 
-fn make_class(runtime: &mut Runtime, class_name: &str) -> Result<Variable, RunnerError> {
+fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, RunnerError> {
     try!(load_class(runtime, &"java/lang/Class"));
     {
-        let maybe_existing = runtime.class_objects.get(&String::from(class_name));
+        let maybe_existing = runtime.class_objects.get(&String::from(descriptor));
         if maybe_existing.is_some() {
             return Ok(maybe_existing.unwrap().clone());
         }
     }
 
     let var = try!(construct_object(runtime, &"java/lang/Class"));
-    let name_object = try!(make_string(runtime, class_name));
+
+    runtime.class_objects.insert(String::from(descriptor), var.clone());
+
+    let name_object = try!(make_string(runtime, descriptor));
     try!(put_field(var.to_ref().unwrap(), &"java/lang/Class", "name", try!(string_intern(runtime, &name_object))));
     try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
     let members = &var.to_ref().unwrap().members;
 
-    let subtype = try!(parse_single_type_string(runtime, class_name, true));
+    let subtype = try!(parse_single_type_string(runtime, descriptor, true));
     let mut is_primitive = false;
     let mut is_array = false;
     match subtype {
@@ -1272,8 +1289,6 @@ fn make_class(runtime: &mut Runtime, class_name: &str) -> Result<Variable, Runne
     }
     members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(is_primitive));
     members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(is_array));
-
-    runtime.class_objects.insert(String::from(class_name), var.clone());
 
     return Ok(var);
 }
@@ -1366,9 +1381,9 @@ fn ldc(runtime: &mut Runtime, index: usize) -> Result<(), RunnerError> {
                 push_on_stack(&mut runtime.current_frame.operand_stack, var);
             }
             &ConstantPoolItem::CONSTANT_Class { index } => {
-                let class_name = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
-                debugPrint!(true, 2, "LDC class {}", class_name);
-                let var = try!(make_class(runtime, class_name.as_str()));
+                let descriptor = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                debugPrint!(true, 2, "LDC class {}", descriptor);
+                let var = try!(make_class(runtime, descriptor.as_str()));
                 push_on_stack(&mut runtime.current_frame.operand_stack, var);
             }
             &ConstantPoolItem::CONSTANT_Integer { value } => {
@@ -1811,54 +1826,67 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
     }
 }
 
-fn find_class(name: &str, class_paths: &Vec<String>) -> Result<ClassResult, RunnerError> {
+fn find_class(base_name: &str, class_paths: &Vec<String>) -> Result<ClassResult, RunnerError> {
     let debug = false;
+    let mut name = String::from(base_name);
+    name = name.replace('.', "/");
     debugPrint!(debug, 3, "Finding class {}", name);
     for class_path in class_paths.iter() {
-        let mut direct_path = class_path.clone();
-        direct_path.push_str(name);
-        direct_path.push_str(".class");
-        debugPrint!(debug, 3, "Trying path {}", direct_path);
-        let direct_classname = get_classname(Path::new(&direct_path));
-        if direct_classname.is_ok() && direct_classname.as_ref().unwrap() == name {
+        let mut direct_path = PathBuf::from(class_path);
+        for sub in name.split('/') {
+            direct_path.push(sub)
+        }
+        direct_path.set_extension("class");
+        debugPrint!(debug, 3, "Trying path {}", direct_path.display());
+        let direct_classname = get_classname(direct_path.as_path());
+        if direct_classname.is_ok() && *direct_classname.as_ref().unwrap() == name {
             debugPrint!(debug, 3, "Name matched for {}", name);
             let maybe_read = read(Path::new(&direct_path));
             if maybe_read.is_ok() {
                 return Ok(maybe_read.unwrap());
             }
         }
-        debugPrint!(debug, 3, "Finding class {} direct load failed ({}), searching {}",
-            name, match &direct_classname {
-                &Ok(ref x) => x.clone(),
-                &Err(ref y) => format!("{:?}", y),
-            }, class_path);
 
-        // Else try globbing
-        let mut glob_path = class_path.clone();
-        glob_path.push_str("/**/*.class");
-        let maybe_glob = glob(glob_path.as_str());
-        if maybe_glob.is_err() {
-            debugPrint!(true, 1, "Error globbing class path {}", class_path);
+        if false {
+            debugPrint!(debug, 3, "Finding class {} direct load failed ({}), searching {}",
+                name, match &direct_classname {
+                    &Ok(ref x) => x.clone(),
+                    &Err(ref y) => format!("{:?}", y),
+                }, class_path);
+
+            // Else try globbing
+            let mut glob_path = class_path.clone();
+            glob_path.push_str("/**/*.class");
+            let maybe_glob = glob(glob_path.as_str());
+            if maybe_glob.is_err() {
+                debugPrint!(true, 1, "Error globbing class path {}", class_path);
+                continue;
+            }
+
+            let class_match = maybe_glob.unwrap()
+                .filter_map(Result::ok)
+                .filter(|x| {
+                    let classname = get_classname(&x);
+                    return classname.is_ok() && classname.unwrap() == name;
+                })
+                .nth(0);
+
+            if class_match.is_none() {
+                debugPrint!(debug, 2, "Could not find {} on class path {}", name, class_path);
+                continue;
+            }
+
+            let maybe_read = read(&class_match.unwrap());
+            if maybe_read.is_err() {
+                debugPrint!(true, 1, "Error reading class {} on class path {}", name, class_path);
+                continue;
+            }
+
+            return Ok(maybe_read.unwrap());
+        } else {
+            debugPrint!(debug, 2, "Could not find {} on class path {} (Error {:?})", name, class_path, direct_classname);
             continue;
         }
-
-        let class_match = maybe_glob.unwrap()
-            .filter_map(Result::ok)
-            .filter(|x| { let classname = get_classname(&x); return classname.is_ok() && classname.unwrap() == name; } )
-            .nth(0);
-
-        if class_match.is_none() {
-            debugPrint!(debug, 2, "Could not find {} on class path {}", name, class_path);
-            continue;
-        }
-
-        let maybe_read = read(&class_match.unwrap());
-        if maybe_read.is_err() {
-            debugPrint!(true, 1, "Error reading class {} on class path {}", name, class_path);
-            continue;
-        }
-
-        return Ok(maybe_read.unwrap());
     }
     return Err(RunnerError::ClassNotLoaded(String::from(name)));
 }
@@ -1943,10 +1971,11 @@ fn find_unresolved_class_dependencies(runtime: &mut Runtime, unresolved_classes:
 }
 
 fn initialise_class_stage_1(runtime: &mut Runtime, class: &Rc<Class>) -> Result<(), RunnerError> {
+    let debug = false;
     if *class.initialising.borrow() || *class.initialised.borrow() {
         return Ok(());
     }
-    debugPrint!(true, 2, "Initialising class stage 1 {}", class.name);
+    debugPrint!(debug, 2, "Initialising class stage 1 {}", class.name);
 
     for field in &class.cr.fields {
         if field.access_flags & ACC_STATIC == 0 {
@@ -1956,7 +1985,7 @@ fn initialise_class_stage_1(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
         let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
         let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
 
-        debugPrint!(true, 3, "Constructing class static member {} {}", name_string, descriptor_string);
+        debugPrint!(debug, 3, "Constructing class static member {} {}", name_string, descriptor_string);
 
         let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
 
@@ -1964,11 +1993,11 @@ fn initialise_class_stage_1(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
     }
     if class.cr.super_class_index > 0 {
         let super_class_name = try!(get_cp_class(&class.cr.constant_pool, class.cr.super_class_index));
-        debugPrint!(true, 3, "Class {} has superclass {}", class.name, super_class_name);
+        debugPrint!(debug, 3, "Class {} has superclass {}", class.name, super_class_name);
         *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&*super_class_name).ok_or(RunnerError::ClassInvalid("Error"))).clone());
     } else {
         if class.name != "java/lang/Object" {
-            debugPrint!(true, 3, "Class {} has superclass {}", class.name, "java/lang/Object");
+            debugPrint!(debug, 3, "Class {} has superclass {}", class.name, "java/lang/Object");
             *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid("Error"))).clone());
         }
     }

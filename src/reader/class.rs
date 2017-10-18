@@ -293,11 +293,11 @@ fn string_from_utf8(buf: &Vec<u8>) -> Result<String, ClassReadError> {
             ret.push((x as u8) as char);
         } else if x & 0xE0 == 0xC0 {
             let y = *iter.next().unwrap() as u32;
-            ret.push(char::from_u32((y & 0x3F) | (x & 0x1F) << 6).unwrap());
+            ret.push(try!(char::from_u32((y & 0x3F) | (x & 0x1F) << 6).ok_or(ClassReadError::UTF8Error(format!("Invalid 2 byte code {} {}", x, y)))));
         } else if x & 0xF0 == 0xE0 {
             let y = *iter.next().unwrap() as u32;
             let z = *iter.next().unwrap() as u32;
-            ret.push(char::from_u32((z & 0x3F) | (y & 0x3F) << 6 | (x & 0xF) << 12).unwrap());
+            ret.push(try!(char::from_u32((z & 0x3F) | (y & 0x3F) << 6 | (x & 0xF) << 12).ok_or(ClassReadError::UTF8Error(format!("Invalid 3 byte code {} {} {}", x, y, z)))));
         } else if x == 0xED {
             let v = *iter.next().unwrap() as u32;
             let w = *iter.next().unwrap() as u32;
@@ -307,7 +307,8 @@ fn string_from_utf8(buf: &Vec<u8>) -> Result<String, ClassReadError> {
             }
             let y = *iter.next().unwrap() as u32;
             let z = *iter.next().unwrap() as u32;
-            ret.push(char::from_u32((z & 0x3F) | (y & 0xF) << 6 | (w & 0x3F) << 10 | (v & 0xF) << 16 | 0x10000).unwrap());
+            ret.push(try!(char::from_u32((z & 0x3F) | (y & 0xF) << 6 | (w & 0x3F) << 10 | (v & 0xF) << 16 | 0x10000)
+                .ok_or(ClassReadError::UTF8Error(format!("Invalid 2x3B code {} {} {} {} {} {}", x, v, w, head2, y, z)))));
         } else {
             return Err(ClassReadError::UTF8Error(format!("Invalid code byte {}", x)));
         }
