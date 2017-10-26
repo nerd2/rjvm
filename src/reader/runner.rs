@@ -8,13 +8,12 @@
 )]
 
 extern crate byteorder;
+extern crate rand;
 use reader::class::*;
 use std;
 use std::fmt;
 use std::io;
 use std::io::Cursor;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::ops::Add;
 use std::ops::Sub;
 use std::ops::Mul;
@@ -72,7 +71,8 @@ pub struct Object {
     type_ref: Rc<Class>,
     members: RefCell<HashMap<String, Variable>>,
     super_class: RefCell<Option<Rc<Object>>>,
-    sub_class: RefCell<Option<Weak<Object>>>
+    sub_class: RefCell<Option<Weak<Object>>>,
+    code: i32
 }
 
 impl fmt::Display for Object {
@@ -104,7 +104,8 @@ pub struct ArrayObject { // Can be either typed or primitive array (including ne
     is_null: bool,
     element_type_ref: Option<Rc<Class>>,
     element_type_str: String,
-    elements: RefCell<Vec<Variable>>
+    elements: RefCell<Vec<Variable>>,
+    code: i32,
 }
 
 impl fmt::Display for ArrayObject {
@@ -296,6 +297,28 @@ impl Variable {
             _ => false,
         }
     }
+
+    pub fn hash_code(&self) -> Result<i32, RunnerError> {
+        match self {
+                &Variable::Reference(ref obj) => {
+                    if obj.is_null {
+                        return Err(RunnerError::NullPointerException);
+                    } else {
+                        return Ok(obj.code);
+                    }
+                },
+                &Variable::ArrayReference(ref obj) => {
+                    if obj.is_null {
+                        return Err(RunnerError::NullPointerException);
+                    } else {
+                        return Ok(obj.code);
+                    }
+                },
+                _ => {
+                    panic!("Called hashcode on primitive type");
+                }
+            };
+    }
 }
 impl fmt::Display for Variable {
      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -331,6 +354,7 @@ struct Runtime {
     string_interns: HashMap<String, Variable>,
     properties: HashMap<String, Variable>,
     class_objects: HashMap<String, Variable>,
+    object_count: i32,
 }
 impl Runtime {
     fn  new(class_paths: Vec<String>, constant_pool: HashMap<u16, ConstantPoolItem>) -> Runtime {
@@ -351,8 +375,15 @@ impl Runtime {
             current_thread: None,
             string_interns: HashMap::new(),
             properties: HashMap::new(),
-            class_objects: HashMap::new()
+            class_objects: HashMap::new(),
+            object_count: rand::random::<i32>(),
         };
+    }
+
+    pub fn get_next_object_code(&mut self) -> i32 {
+        let ret = self.object_count;
+        self.object_count += 1;
+        return ret;
     }
 }
 
@@ -507,7 +538,7 @@ fn initialise_variable(runtime: &mut Runtime, descriptor_string: &str) -> Result
 }
 
 
-fn construct_char_array(s: &str) -> Variable {
+fn construct_char_array(runtime: &mut Runtime, s: &str) -> Variable {
     let mut v : Vec<Variable> = Vec::new();
     for c in s.chars() {
         v.push(Variable::Char(c));
@@ -516,17 +547,19 @@ fn construct_char_array(s: &str) -> Variable {
         is_null: false,
         element_type_ref: None,
         element_type_str: String::from("C"),
-        elements: RefCell::new(v)
+        elements: RefCell::new(v),
+        code: runtime.get_next_object_code()
     };
     return Variable::ArrayReference(Rc::new(array_object));
 }
 
-fn construct_array(_runtime: &mut Runtime, class: Rc<Class>, data: Vec<Variable>) -> Result<Variable, RunnerError> {
+fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Vec<Variable>) -> Result<Variable, RunnerError> {
     let array_object = ArrayObject {
         is_null: false,
         element_type_ref: Some(class.clone()),
         element_type_str: generate_class_descriptor(&class),
-        elements: RefCell::new(data)
+        elements: RefCell::new(data),
+        code: runtime.get_next_object_code()
     };
     return Ok(Variable::ArrayReference(Rc::new(array_object)));
 }
@@ -536,19 +569,27 @@ fn construct_array_by_name(runtime: &mut Runtime, name: &str, data: Vec<Variable
     return construct_array(runtime, class, data);
 }
 
-fn construct_primitive_array(_runtime: &mut Runtime, element_type: &str, data: Vec<Variable>) -> Result<Variable, RunnerError> {
+fn construct_primitive_array(runtime: &mut Runtime, element_type: &str, data: Vec<Variable>) -> Result<Variable, RunnerError> {
     // TODO
     let array_object = ArrayObject {
         is_null: false,
         element_type_ref: None,
         element_type_str: String::from(element_type),
-        elements: RefCell::new(data)
+        elements: RefCell::new(data),
+        code: runtime.get_next_object_code()
     };
     return Ok(Variable::ArrayReference(Rc::new(array_object)));
 }
 
-fn construct_null_object(_runtime: &mut Runtime, class: Rc<Class>) -> Result<Variable, RunnerError> {
-    let obj = Rc::new(Object { is_null: true, type_ref: class, members: RefCell::new(HashMap::new()), super_class: RefCell::new(None), sub_class: RefCell::new(None) });
+fn construct_null_object(runtime: &mut Runtime, class: Rc<Class>) -> Result<Variable, RunnerError> {
+    let obj = Rc::new(Object {
+        is_null: true,
+        type_ref: class,
+        members: RefCell::new(HashMap::new()),
+        super_class: RefCell::new(None),
+        sub_class: RefCell::new(None),
+        code: runtime.get_next_object_code()
+    });
     return Ok(Variable::Reference(obj));
 }
 
@@ -583,7 +624,14 @@ fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, Runne
             members.insert((*name_string).clone(), var);
         }
 
-        let obj = Rc::new(Object { is_null: false, type_ref: class.clone(), members: RefCell::new(members), super_class: RefCell::new(None), sub_class: RefCell::new(sub_class.clone()) });
+        let obj = Rc::new(Object {
+            is_null: false,
+            type_ref: class.clone(),
+            members: RefCell::new(members),
+            super_class: RefCell::new(None),
+            sub_class: RefCell::new(sub_class.clone()),
+            code: runtime.get_next_object_code()
+        });
         if original_obj.is_none() {
             original_obj = Some(obj.clone());
         }
@@ -833,43 +881,6 @@ fn invoke_manual(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, m
     return Ok(());
 }
 
-fn hash_var<H>(var: &Variable, state: &mut H) where H: Hasher {
-    match var {
-        &Variable::Boolean(ref x) => {x.hash(state);}
-        &Variable::Byte(ref x) => {x.hash(state);}
-        &Variable::Char(ref x) => {x.hash(state);}
-        &Variable::Short(ref x) => {x.hash(state);}
-        &Variable::Int(ref x) => {x.hash(state);}
-        &Variable::Long(ref x) => {x.hash(state);}
-        &Variable::Float(ref x) => { unsafe {std::mem::transmute::<f32, u32>(*x)}.hash(state);}
-        &Variable::Double(ref x) => { unsafe {std::mem::transmute::<f64, u64>(*x)}.hash(state);}
-        &Variable::Reference(ref obj) => { hash_obj(obj.clone(), state); }
-        &Variable::ArrayReference(ref array) => { hash_array( array.clone(), state); }
-        &Variable::InterfaceReference(ref x) => { hash_obj(x.clone(), state); }
-        &Variable::UnresolvedReference(ref x) => { x.hash(state); }
-    }
-}
-
-fn hash_obj<H>(obj: Rc<Object>, state: &mut H) where H: Hasher {
-    let mut mobj = Some(get_most_sub_class(obj));
-    while mobj.is_some() {
-        let aobj = mobj.unwrap();
-        let members = aobj.members.borrow();
-        for (_key, value) in members.iter() {
-            hash_var(value, state);
-        }
-
-        let new_obj = aobj.super_class.borrow().clone();
-        mobj = new_obj;
-    }
-}
-
-fn hash_array<H>(array: Rc<ArrayObject>, state: &mut H) where H: Hasher {
-    for x in array.elements.borrow().iter() {
-        hash_var(x, state);
-    }
-}
-
 fn string_intern(runtime: &mut Runtime, var: &Variable) -> Result<Variable, RunnerError> {
     let obj = var.to_ref();
     let string = try!(extract_from_string(&obj));
@@ -1056,20 +1067,14 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, ret);
         }
         ("java/lang/Object", "hashCode", "()I") => {
-            let obj = args[0].clone().to_ref();
-            let mut s = DefaultHasher::new();
-            hash_obj(obj, &mut s);
-            let hash = s.finish();
-            runnerPrint!(runtime, true, 2, "BUILTIN: hashcode {}", hash);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(hash as i32));
+            let code = try!(args[0].hash_code());
+            runnerPrint!(runtime, true, 2, "BUILTIN: hashcode {}", code);
+            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(code));
         },
         ("java/lang/System", "identityHashCode", "(Ljava/lang/Object;)I") => {
-            let obj = args[0].clone().to_ref();
-            let mut s = DefaultHasher::new();
-            hash_obj(obj, &mut s);
-            let hash = s.finish();
-            runnerPrint!(runtime, true, 2, "BUILTIN: identityHashCode {}", hash);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(hash as i32));
+            let code = try!(args[0].hash_code());
+            runnerPrint!(runtime, true, 2, "BUILTIN: identityHashCode {}", code); // TODO test
+            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(code));
         },
         ("java/lang/Object", "getClass", "()Ljava/lang/Class;") => {
             let ref descriptor = generate_variable_descriptor(&args[0]);
@@ -1253,7 +1258,7 @@ fn branch_if<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, c
 fn make_string(runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerError> {
     let var = try!(construct_object(runtime, &"java/lang/String"));
     let obj = var.to_ref();
-    try!(put_field(obj, &"java/lang/String", &"value", construct_char_array(val)));
+    try!(put_field(obj, &"java/lang/String", &"value", construct_char_array(runtime,val)));
     return Ok(var);
 }
 
