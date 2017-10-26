@@ -33,4 +33,35 @@ public class hash {
         obj.b.b = b;
         return obj.hashCode();
     }
+
+
+    private static class D {
+        public E e;
+        int x;
+    }
+
+    private static class E {
+        public D d;
+        int y;
+    }
+
+    private static int circularHashD(int x, int y) {
+        D d = new D();
+        E e = new E();
+        d.e = e;
+        d.x = x;
+        e.d = d;
+        e.y = y;
+        return d.hashCode();
+    }
+
+    private static int circularHashE(int x, int y) {
+        D d = new D();
+        E e = new E();
+        d.e = e;
+        d.x = x;
+        e.d = d;
+        e.y = y;
+        return e.hashCode();
+    }
 }

@@ -111,6 +111,10 @@ mod tests {
                          int2_int_call("tests/hash.class", "hashC", 0, 0),
                          int2_int_call("tests/hash.class", "hashC", 0, 1),
                          int2_int_call("tests/hash.class", "hashC", 1, 0),
+                         int2_int_call("tests/hash.class", "circularHashD", 1, 0),
+                         int2_int_call("tests/hash.class", "circularHashD", 2, 0),
+                         int2_int_call("tests/hash.class", "circularHashE", 1, 0),
+                         int2_int_call("tests/hash.class", "circularHashE", 2, 0),
                          );
         let mut set = HashSet::new();
         for hash in hashes {
