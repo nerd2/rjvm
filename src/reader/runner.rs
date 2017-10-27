@@ -80,9 +80,9 @@ impl fmt::Display for Object {
         return match self.type_ref.name.as_str() {
             "java/lang/String" => {
                 let str = string_to_string(self);
-                write!(f, "String {}", str.as_str())
+                write!(f, "String {} '{}' null:{}", self.code, str.as_str(), self.is_null)
             }
-            _ => {write!(f, "Object {}", self.type_ref.name.as_str()) }
+            _ => {write!(f, "Object {} type:{} null:{}",self.code, self.type_ref.name.as_str(), self.is_null) }
         }
     }
 }
@@ -297,6 +297,15 @@ impl Variable {
             _ => false,
         }
     }
+    pub fn is_primitive(&self) -> bool {
+        return match self {
+            &Variable::Reference(ref _x) => false,
+            &Variable::ArrayReference(ref _x) => false,
+            &Variable::InterfaceReference(ref _x) => false,
+            &Variable::UnresolvedReference(ref _x) => false,
+            _ => true,
+        }
+    }
 
     pub fn hash_code(&self) -> Result<i32, RunnerError> {
         match self {
@@ -319,20 +328,62 @@ impl Variable {
                 }
             };
     }
+
+    pub fn get_descriptor(&self) -> String {
+        let mut ret = String::new();
+        match self {
+            &Variable::Byte(_v) => {ret.push('B');},
+            &Variable::Char(_v) => {ret.push('C');},
+            &Variable::Double(_v) => {ret.push('D');},
+            &Variable::Float(_v) => {ret.push('F');},
+            &Variable::Int(_v) => {ret.push('I');},
+            &Variable::Long(_v) => {ret.push('J');},
+            &Variable::Short(_v) => {ret.push('S');},
+            &Variable::Boolean(_v) => {ret.push('Z');},
+            &Variable::Reference(ref obj) => {return generate_class_descriptor(&obj.type_ref); },
+            &Variable::ArrayReference(ref array_obj) => {
+                ret.push('[');
+                if array_obj.element_type_ref.is_some() {
+                    ret.push_str(generate_class_descriptor(array_obj.element_type_ref.as_ref().unwrap()).as_str());
+                } else {
+                    ret.push_str(array_obj.element_type_str.as_str());
+                }
+            },
+            &Variable::UnresolvedReference(ref class_name) => {
+                ret.push('L');
+                ret.push_str(class_name.as_str());
+                ret.push(';');
+            },
+            _ => {panic!("Type not covered");}
+        }
+        return ret;
+    }
+
+    pub fn display(&self) -> String {
+        return match self {
+            &Variable::Reference(ref obj) => format!("Reference {}", obj),
+            &Variable::ArrayReference(ref array) => format!("ArrayReference {}", array),
+            _ => format!("Other {:?}", self)
+        }
+    }
+
+    pub fn extract_string(&self) -> String {
+        match self {
+            &Variable::Reference(ref obj) => {
+                match obj.type_ref.name.as_str() {
+                    "java/lang/String" => {
+                        return string_to_string(obj);
+                    },
+                    _ => {panic!("{} is not a string", self);}
+                }
+            }
+            _ => {panic!("{} is not a string", self);}
+        }
+    }
 }
 impl fmt::Display for Variable {
      fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-         match self {
-             &Variable::Reference(ref obj) => {
-                 write!(f, "{}", obj)
-             },
-             &Variable::ArrayReference(ref array) => {
-                 write!(f, "{}", array)
-             },
-             _ => {
-                 write!(f, "{:?}", self)
-             }
-         }
+         return write!(f, "{}", self.display());
      }
 }
 
@@ -565,7 +616,7 @@ fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Vec<Variable>)
 }
 
 fn construct_array_by_name(runtime: &mut Runtime, name: &str, data: Vec<Variable>) -> Result<Variable, RunnerError> {
-    let class = try!(runtime.classes.get(name).ok_or(RunnerError::ClassInvalid2(format!("Failed to find class {}", name)))).clone();
+    let class = try!(load_class(runtime, name));
     return construct_array(runtime, class, data);
 }
 
@@ -594,7 +645,7 @@ fn construct_null_object(runtime: &mut Runtime, class: Rc<Class>) -> Result<Vari
 }
 
 fn construct_null_object_by_name(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
-    let class = try!(runtime.classes.get(name).ok_or(RunnerError::ClassInvalid2(format!("Failed to find class {}", name)))).clone();
+    let class = try!(load_class(runtime, name));
     return construct_null_object(runtime, class);
 }
 
@@ -934,18 +985,10 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("java/lang/Class", "getComponentType", "()Ljava/lang/Class;") => {
             let class_object_1 = args[0].clone().to_ref();
             let is_array = class_object_1.members.borrow().get(&String::from("__is_array")).unwrap().to_bool();
-            let is_primitive = class_object_1.members.borrow().get(&String::from("__is_primitive")).unwrap().to_bool();
-            let var =
-                if is_array {
-                    if is_primitive {
-                        args[0].clone() // TODO: this is rubbish
-                    } else {
-                        let component_class_descriptor = generate_variable_descriptor(class_object_1.members.borrow().get(&String::from("__class")).unwrap());
-                        try!(make_class(runtime, component_class_descriptor.as_str()))
-                    }
-                } else {
-                    try!(construct_object(runtime, &"java/lang/Class"))
-                };
+            if !is_array {
+                return Err(RunnerError::ClassInvalid2(format!("getComponentType on non-array {}", class_object_1)));
+            }
+            let var = class_object_1.members.borrow().get(&String::from("__componentType")).unwrap().clone();
             runnerPrint!(runtime, true, 2, "BUILTIN: getComponentType {}", var);
 
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
@@ -1077,7 +1120,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(code));
         },
         ("java/lang/Object", "getClass", "()Ljava/lang/Class;") => {
-            let ref descriptor = generate_variable_descriptor(&args[0]);
+            let ref descriptor = args[0].get_descriptor();
             let var = try!(make_class(runtime, descriptor.as_str()));
             runnerPrint!(runtime, true, 2, "BUILTIN: getClass {} {}", descriptor, var);
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
@@ -1242,12 +1285,13 @@ fn ifcmp<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, cmp: 
 }
 
 fn branch_if<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, current_position: u64, cmp: F) -> Result<(), RunnerError>
-    where F: Fn(Variable) -> bool
+    where F: Fn(&Variable) -> bool
 {
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
     let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    runnerPrint!(runtime, true, 2, "{} {} {}", desc, var, branch_offset);
-    if cmp(var) {
+    let compare_result = cmp(&var);
+    runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, var, branch_offset, compare_result);
+    if compare_result {
         let new_pos = (current_position as i64 + branch_offset as i64) as u64;
         runnerPrint!(runtime, true, 2, "BRANCHED from {} to {}", current_position, new_pos);
         buf.set_position(new_pos);
@@ -1286,20 +1330,27 @@ fn make_method(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, 
     return Ok(var);
 }
 
-fn get_primitive_class(runtime: &mut Runtime, typ: String) -> Result<Variable, RunnerError> {
+fn get_primitive_class(runtime: &mut Runtime, descriptor: String) -> Result<Variable, RunnerError> {
+    if descriptor.len() > 1 {
+        panic!("Asked to make primitive class of type '{}'", descriptor);
+    }
+
     {
-        let maybe_existing = runtime.class_objects.get(&typ);
+        let maybe_existing = runtime.class_objects.get(&descriptor);
         if maybe_existing.is_some() {
             return Ok(maybe_existing.unwrap().clone());
         }
     }
 
     let var = try!(construct_object(runtime, &"java/lang/Class"));
+    runtime.class_objects.insert(descriptor.clone(), var.clone());
+
+    let name_object = try!(make_string(runtime, descriptor.as_str()));
+    try!(put_field(var.to_ref(), &"java/lang/Class", "name", try!(string_intern(runtime, &name_object))));
     try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
     let members = &var.to_ref().members;
     members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(true));
     members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(false));
-    runtime.class_objects.insert(typ, var.clone());
 
     return Ok(var);
 }
@@ -1314,7 +1365,6 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
     }
 
     let var = try!(construct_object(runtime, &"java/lang/Class"));
-
     runtime.class_objects.insert(String::from(descriptor), var.clone());
 
     let name_object = try!(make_string(runtime, descriptor));
@@ -1358,9 +1408,15 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
             try!(put_field(var.to_ref(), &"java/lang/Class", "reflectionData", soft_reference_object));
             members.borrow_mut().insert(String::from("__class"), try!(construct_null_object(runtime, class)));
         },
-        Variable::ArrayReference(_x) => {
+        Variable::ArrayReference(ref array_obj) => {
             is_array = true;
-            // TODO
+            let component_type;
+            if array_obj.element_type_ref.is_some() {
+                component_type = try!(make_class(runtime, array_obj.element_type_str.clone().as_str()));
+            } else {
+                component_type = try!(get_primitive_class(runtime, array_obj.element_type_str.clone()));
+            }
+            members.borrow_mut().insert(String::from("__componentType"), component_type);
         },
         _ => { is_primitive = true; }
     }
@@ -1787,8 +1843,8 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let obj = var.to_ref();
-                runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}'", class_name, field_name, typ, obj);
                 let f = try!(get_field(&obj, class_name.as_str(), field_name.as_str()));
+                runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}' field:'{}'", class_name, field_name, typ, obj, f);
                 push_on_stack(&mut runtime.current_frame.operand_stack, f);
             }
             181 => {
@@ -2133,40 +2189,14 @@ fn generate_class_descriptor(class: &Rc<Class>) -> String {
     return ret;
 }
 
-fn generate_variable_descriptor(var: &Variable) -> String {
-    let mut ret = String::new();
-    match var {
-        &Variable::Byte(_v) => {ret.push('B');},
-        &Variable::Char(_v) => {ret.push('C');},
-        &Variable::Double(_v) => {ret.push('D');},
-        &Variable::Float(_v) => {ret.push('F');},
-        &Variable::Int(_v) => {ret.push('I');},
-        &Variable::Long(_v) => {ret.push('J');},
-        &Variable::Short(_v) => {ret.push('S');},
-        &Variable::Boolean(_v) => {ret.push('Z');},
-        &Variable::Reference(ref obj) => {return generate_class_descriptor(&obj.type_ref); },
-        &Variable::UnresolvedReference(ref class_name) => {
-            ret.push('L');
-            ret.push_str(class_name.as_str());
-            ret.push(';');
-        },
-        _ => {panic!("Type not covered");}
-    }
-    return ret;
-}
-
-fn generate_method_descriptor(args: &Vec<Variable>, return_type: Option<&Variable>, is_static: bool) -> String {
+fn generate_method_descriptor(args: &Vec<Variable>, return_descriptor: String, is_static: bool) -> String {
     let mut ret = String::new();
     ret.push('(');
     for arg in args.iter().skip(if is_static {0} else {1}) {
-        ret.push_str(generate_variable_descriptor(arg).as_str());
+        ret.push_str(arg.get_descriptor().as_str());
     }
     ret.push(')');
-    if return_type.is_some() {
-        ret.push_str(generate_variable_descriptor(return_type.unwrap()).as_str());
-    } else {
-        ret.push('V');
-    }
+    ret.push_str(return_descriptor.as_str());
     return ret;
 }
 
@@ -2231,7 +2261,11 @@ fn parse_single_type_string(runtime: &mut Runtime, string: &str, resolve: bool) 
         if array_depth > 1 {
             panic!("Unsupported array depth {}", array_depth);
         } else {
-            return Ok(try!(construct_array_by_name(runtime, "unknown", Vec::new())));
+            if variable.is_primitive() {
+                return Ok(try!(construct_primitive_array(runtime, variable.get_descriptor().as_str(), Vec::new())));
+            } else {
+                return Ok(try!(construct_array(runtime, variable.to_ref().type_ref.clone(), Vec::new())));
+            }
         }
     } else {
         return Ok(variable);
@@ -2291,7 +2325,7 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
     return Ok(());
 }
 
-pub fn run_method(class_paths: &Vec<String>, class_result: &ClassResult, method: &str, arguments: &Vec<Variable>, return_type: Option<&Variable>) -> Result<Variable, RunnerError> {
+pub fn run_method(class_paths: &Vec<String>, class_result: &ClassResult, method: &str, arguments: &Vec<Variable>, return_descriptor: String) -> Result<Variable, RunnerError> {
     println!("Running method {} with {} arguments", method, arguments.len());
     let mut runtime = Runtime::new(class_paths.clone(), class_result.constant_pool.clone());
 
@@ -2315,7 +2349,7 @@ pub fn run_method(class_paths: &Vec<String>, class_result: &ClassResult, method:
         }
     }
 
-    let method_descriptor = generate_method_descriptor(&arguments, return_type, true);
+    let method_descriptor = generate_method_descriptor(&arguments, return_descriptor, true);
     runnerPrint!(runtime, true, 1, "Finding method {} with descriptor {}", method, method_descriptor);
     let code = try!(get_class_method_code(class_result, method, method_descriptor.as_str()));
 

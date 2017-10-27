@@ -15,7 +15,7 @@ mod tests {
             Path::new("tests/maths.class"),
             fn_name,
             &args,
-            Some(&transform(0)),
+            transform(0).get_descriptor().as_str(),
             &Vec::new()
         ),
         transform(-3));
@@ -27,9 +27,15 @@ mod tests {
             Path::new("tests/maths.class"),
             fn_name,
             &args,
-            Some(&transform(0)),
+            transform(0).get_descriptor().as_str(),
             &Vec::new()),
         transform(result));
+    }
+
+    #[test]
+    fn get_component_type() {
+        assert_eq!(run_method(Path::new("tests/getComponentType.class"), "getComponentTypeCheck1", &Vec::new(), "Ljava/lang/String;", &vec!(String::from("./tests/"))).extract_string(), "LgetComponentType$A;");
+        assert_eq!(run_method(Path::new("tests/getComponentType.class"), "getComponentTypeCheck2", &Vec::new(), "Ljava/lang/String;", &vec!(String::from("./tests/"))).extract_string(), "Z");
     }
 
     #[test]
@@ -45,18 +51,18 @@ mod tests {
 
     #[test]
     fn lookupswitch() {
-        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('a')), Some(&Variable::Boolean(false)), &Vec::new()), Variable::Int(0));
-        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('.')), Some(&Variable::Boolean(false)), &Vec::new()), Variable::Int(1));
-        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('>')), Some(&Variable::Boolean(false)), &Vec::new()), Variable::Int(1));
-        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char(' ')), Some(&Variable::Boolean(false)), &Vec::new()), Variable::Int(0));
+        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('a')), "Z", &Vec::new()), Variable::Int(0));
+        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('.')), "Z", &Vec::new()), Variable::Int(1));
+        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char('>')), "Z", &Vec::new()), Variable::Int(1));
+        assert_eq!(run_method(Path::new("tests/lookupswitch.class"), "check", &vec!(Variable::Char(' ')), "Z", &Vec::new()), Variable::Int(0));
     }
 
     #[test]
     fn string_basics() {
-        assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Int('a' as i32));
-        assert_eq!(run_method(Path::new("tests/string.class"), "copy", &Vec::new(), Some(&Variable::Char('\0')), &Vec::new()), Variable::Int('o' as i32));
-        assert_eq!(run_method(Path::new("tests/string.class"), "getBytes", &Vec::new(), Some(&Variable::Byte(0)), &Vec::new()), Variable::Byte('e' as u8));
-        assert_eq!(run_method(Path::new("tests/string.class"), "getHashCode", &Vec::new(), Some(&Variable::Int(0)), &Vec::new()), Variable::Int(2));
+        assert_eq!(run_method(Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), "C", &Vec::new()), Variable::Int('a' as i32));
+        assert_eq!(run_method(Path::new("tests/string.class"), "copy", &Vec::new(), "C", &Vec::new()), Variable::Int('o' as i32));
+        assert_eq!(run_method(Path::new("tests/string.class"), "getBytes", &Vec::new(), "B", &Vec::new()), Variable::Byte('e' as u8));
+        assert_eq!(run_method(Path::new("tests/string.class"), "getHashCode", &Vec::new(), "I", &Vec::new()), Variable::Int(2));
     }
 
     #[test]
@@ -75,15 +81,15 @@ mod tests {
     }
 
     fn void_int_call(path: &str, method: &str) -> i32 {
-        return run_method(Path::new(path), method, &Vec::new(), Some(&Variable::Int(0)), &vec!(String::from("./tests/"))).to_int();
+        return run_method(Path::new(path), method, &Vec::new(), "I", &vec!(String::from("./tests/"))).to_int();
     }
 
     fn int_int_call(path: &str, method: &str, arg: i32) -> i32 {
-        return run_method(Path::new(path), method, &vec!(Variable::Int(arg)), Some(&Variable::Int(0)), &vec!(String::from("./tests/"))).to_int();
+        return run_method(Path::new(path), method, &vec!(Variable::Int(arg)), "I", &vec!(String::from("./tests/"))).to_int();
     }
 
     fn int2_int_call(path: &str, method: &str, arg: i32, arg2: i32) -> i32 {
-        return run_method(Path::new(path), method, &vec!(Variable::Int(arg), Variable::Int(arg2)), Some(&Variable::Int(0)), &vec!(String::from("./tests/"))).to_int();
+        return run_method(Path::new(path), method, &vec!(Variable::Int(arg), Variable::Int(arg2)), "I", &vec!(String::from("./tests/"))).to_int();
     }
 
     #[test]
