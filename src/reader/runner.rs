@@ -114,7 +114,7 @@ impl fmt::Display for ArrayObject {
             write!(f, "Array of type {} is NULL", self.element_type_str)
         } else {
             let vec = self.elements.borrow();
-            write!(f, "ArrayReference of Type {} Size:{} ({})",
+            write!(f, "Array of type {} Size:{} ({})",
                    self.element_type_str,
                    vec.len(),
                    vec.iter()
@@ -234,7 +234,7 @@ impl Variable {
                 return obj.clone();
             },
             _ => {
-                panic!("Couldn't convert to reference");
+                panic!("Couldn't convert '{}' to reference", self);
             }
         }
     }
@@ -247,7 +247,7 @@ impl Variable {
                 return true;
             },
             _ => {
-                panic!("Couldn't convert to reference or array");
+                panic!("Couldn't convert '{}' to reference or array", self);
             }
         }
     }
@@ -304,6 +304,13 @@ impl Variable {
             &Variable::InterfaceReference(ref _x) => false,
             &Variable::UnresolvedReference(ref _x) => false,
             _ => true,
+        }
+    }
+
+    pub fn is_unresolved(&self) -> bool {
+        return match self {
+            &Variable::UnresolvedReference(ref _x) => true,
+            _ => false,
         }
     }
 
@@ -405,6 +412,7 @@ struct Runtime {
     string_interns: HashMap<String, Variable>,
     properties: HashMap<String, Variable>,
     class_objects: HashMap<String, Variable>,
+    unresolved_classes: Vec<String>,
     object_count: i32,
 }
 impl Runtime {
@@ -427,6 +435,7 @@ impl Runtime {
             string_interns: HashMap::new(),
             properties: HashMap::new(),
             class_objects: HashMap::new(),
+            unresolved_classes: Vec::new(),
             object_count: rand::random::<i32>(),
         };
     }
@@ -447,6 +456,25 @@ impl From<ClassReadError> for RunnerError {
     fn from(err: ClassReadError) -> RunnerError {
         RunnerError::ClassInvalid2(format!("{:?}", err))
     }
+}
+
+fn type_name_to_descriptor(name: &String) -> String {
+    return String::from(match name.as_str() {
+        "byte" => "B",
+        "char" => "C",
+        "double" => "D",
+        "float" => "F",
+        "int" => "I",
+        "long" => "J",
+        "short" => "S",
+        "boolean" => "Z",
+        _ => {
+            let mut ret = String::from("L");
+            ret.push_str(name.as_str());
+            ret.push(';');
+            return ret;
+        }
+    });
 }
 
 fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, RunnerError> {
@@ -965,8 +993,9 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("java/lang/Class", "getPrimitiveClass", "(Ljava/lang/String;)Ljava/lang/Class;") => {
             let obj = args[0].clone().to_ref();
             let string = try!(extract_from_string(&obj));
-            runnerPrint!(runtime, true, 2, "BUILTIN: getPrimitiveClass {}", string);
-            let var = try!(get_primitive_class(runtime, string));
+            let descriptor = type_name_to_descriptor(&string);
+            runnerPrint!(runtime, true, 2, "BUILTIN: getPrimitiveClass {} {}", string, descriptor);
+            let var = try!(get_primitive_class(runtime, descriptor));
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         ("java/lang/Class", "isAssignableFrom", "(Ljava/lang/Class;)Z") => {
@@ -1467,11 +1496,11 @@ fn icmp<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, cmp: F
     return Ok(());
 }
 
-fn rc_ptr_eq<T: ?Sized>(this: Rc<T>, other: Rc<T>) -> bool
+fn rc_ptr_eq<T: ?Sized>(this: &Rc<T>, other: &Rc<T>) -> bool
     where T: std::fmt::Display
 {
-    let this_ptr: *const T = &*this;
-    let other_ptr: *const T = &*other;
+    let this_ptr: *const T = &**this;
+    let other_ptr: *const T = &**other;
     debugPrint!(false, 2, "RC ptr eq {} {:p} {} {:p}", this, this_ptr, other, other_ptr);
     this_ptr == other_ptr
 }
@@ -1488,10 +1517,28 @@ fn ifacmp(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, should_
 {
     let current_position = buf.position() - 1;
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
-    let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_ref();
-    let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_ref();
-    runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, popped1.is_null, popped2.is_null, branch_offset);
-    let matching = (popped1.is_null && popped2.is_null) || rc_ptr_eq(popped1, popped2);
+    let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
+    let matching = match popped1 {
+        Variable::Reference(ref obj1) => {
+            match popped2 {
+                Variable::Reference(ref obj2) => {
+                    (obj1.is_null && obj2.is_null) || rc_ptr_eq(obj1, obj2)
+                },
+                _ => false
+            }
+        },
+        Variable::ArrayReference(ref aobj1) => {
+            match popped2 {
+                Variable::ArrayReference(ref aobj2) => {
+                    (aobj1.is_null && aobj2.is_null) || rc_ptr_eq(aobj1, aobj2)
+                },
+                _ => false
+            }
+        },
+        _ => false
+    };
     if should_match == matching {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
         runnerPrint!(runtime, true, 2, "BRANCHED from {} to {}", current_position, new_position);
@@ -2073,24 +2120,23 @@ fn load_class(runtime: &mut Runtime, name: &str) -> Result<Rc<Class>, RunnerErro
 
 fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError>  {
     let debug = true;
-    let mut unresolved_classes : Vec<String> = Vec::new();
     let mut classes_to_process : Vec<Rc<Class>> = Vec::new();
 
     let new_class = Rc::new(Class::new(&String::from(name), class_result));
     runtime.classes.insert(String::from(name), new_class.clone());
     classes_to_process.push(new_class);
     runnerPrint!(runtime, debug, 1, "Bootstrapping {}", name);
-    try!(find_unresolved_class_dependencies(runtime, &mut unresolved_classes, class_result));
+    try!(find_unresolved_class_dependencies(runtime, class_result));
 
-    while unresolved_classes.len() > 0 {
-        let class_to_resolve = unresolved_classes.pop().unwrap().clone();
+    while runtime.unresolved_classes.len() > 0 {
+        let class_to_resolve = runtime.unresolved_classes.pop().unwrap().clone();
         if !runtime.classes.contains_key(&class_to_resolve) {
             runnerPrint!(runtime, debug, 2, "Finding unresolved dependencies in class {}", class_to_resolve);
             let class_result_to_resolve = try!(find_class(runtime,&class_to_resolve));
             let new_class = Rc::new(Class::new(&class_to_resolve, &class_result_to_resolve));
             runtime.classes.insert(class_to_resolve, new_class.clone());
             classes_to_process.push(new_class);
-            try!(find_unresolved_class_dependencies(runtime, &mut unresolved_classes, &class_result_to_resolve));
+            try!(find_unresolved_class_dependencies(runtime, &class_result_to_resolve));
         }
     }
 
@@ -2104,32 +2150,34 @@ fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_res
     return Ok(my_class);
 }
 
-fn find_unresolved_class_dependencies(runtime: &mut Runtime, unresolved_classes: &mut Vec<String>, class_result: &ClassResult) -> Result<(), RunnerError> {
-    let debug = false;
+fn find_unresolved_class_dependencies(runtime: &mut Runtime, class_result: &ClassResult) -> Result<(), RunnerError> {
+    let debug = true;
     for field in &class_result.fields {
         let name_string = try!(get_cp_str(&class_result.constant_pool, field.name_index));
         let descriptor_string = try!(get_cp_str(&class_result.constant_pool, field.descriptor_index));
 
         runnerPrint!(runtime, debug, 3, "Checking field {} {}", name_string, descriptor_string);
 
-        let (variable, _array_depth) = try!(extract_type_info_from_descriptor(runtime, descriptor_string.as_str(), false));
-        match variable {
-            Variable::UnresolvedReference(ref type_string) => {
-                runnerPrint!(runtime, debug, 3, "Class {} is unresolved", type_string);
-                unresolved_classes.push(type_string.clone());
-            },
-            _ => {}
-        }
+        try!(extract_type_info_from_descriptor(runtime, descriptor_string.as_str(), false));
+    }
+
+    for method in &class_result.methods {
+        let name_string = try!(get_cp_str(&class_result.constant_pool, method.name_index));
+        let descriptor_string = try!(get_cp_str(&class_result.constant_pool, method.descriptor_index));
+
+        runnerPrint!(runtime, debug, 3, "Checking method {} {}", name_string, descriptor_string);
+
+        try!(parse_function_type_string(runtime, descriptor_string.as_str()));
     }
 
     if class_result.super_class_index > 0 {
         let class_name = try!(get_cp_class(&class_result.constant_pool, class_result.super_class_index));
         if !runtime.classes.contains_key(&*class_name) {
-            unresolved_classes.push((*class_name).clone());
+            runtime.unresolved_classes.push((*class_name).clone());
         }
     }
     if !runtime.classes.contains_key(&String::from("java/lang/Object")) {
-        unresolved_classes.push(String::from("java/lang/Object"));
+        runtime.unresolved_classes.push(String::from("java/lang/Object"));
     }
     return Ok(());
 }
@@ -2245,6 +2293,7 @@ fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolv
                     let class = runtime.classes.get(type_string.as_str()).unwrap().clone();
                     variable = try!(construct_null_object(runtime, class));
                 } else {
+                    runtime.unresolved_classes.push(type_string.clone());
                     variable = Variable::UnresolvedReference(type_string.clone());
                 }
             }
@@ -2259,13 +2308,14 @@ fn parse_single_type_string(runtime: &mut Runtime, string: &str, resolve: bool) 
 
     if array_depth > 0 {
         if array_depth > 1 {
-            panic!("Unsupported array depth {}", array_depth);
+            runnerPrint!(runtime, true, 1, "Warning: >1 array depth, is this right?");
+        }
+        if variable.is_primitive() {
+            return Ok(try!(construct_primitive_array(runtime, variable.get_descriptor().as_str(), Vec::new())));
+        } else if variable.is_unresolved() {
+            return Ok(variable);
         } else {
-            if variable.is_primitive() {
-                return Ok(try!(construct_primitive_array(runtime, variable.get_descriptor().as_str(), Vec::new())));
-            } else {
-                return Ok(try!(construct_array(runtime, variable.to_ref().type_ref.clone(), Vec::new())));
-            }
+            return Ok(try!(construct_array(runtime, variable.to_ref().type_ref.clone(), Vec::new())));
         }
     } else {
         return Ok(variable);

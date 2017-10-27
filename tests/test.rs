@@ -93,6 +93,12 @@ mod tests {
     }
 
     #[test]
+    fn arrays() {
+        assert_eq!(void_int_call("tests/arrays.class", "arrayReturningFunctionTest"), 12);
+        assert_eq!(void_int_call("tests/arrays.class", "arrayComparison"), 10);
+    }
+
+    #[test]
     fn inheritance() {
         assert_eq!(void_int_call("tests/inheritance.class", "basicImplementation"), 1);
         assert_eq!(void_int_call("tests/inheritance.class", "basicImplementationExtension"), 2);
