@@ -397,7 +397,7 @@ struct Frame {
     operand_stack: Vec<Variable>,
 }
 
-struct Runtime {
+pub struct Runtime {
     previous_frames: Vec<Frame>,
     current_frame: Frame,
     class_paths: Vec<String>,
@@ -411,7 +411,7 @@ struct Runtime {
     object_count: i32,
 }
 impl Runtime {
-    fn  new(class_paths: Vec<String>, constant_pool: HashMap<u16, ConstantPoolItem>) -> Runtime {
+    fn  new(class_paths: Vec<String>) -> Runtime {
         return Runtime {
             class_paths: class_paths,
             previous_frames: vec!(Frame {
@@ -421,7 +421,7 @@ impl Runtime {
                 local_variables: Vec::new()}),
             current_frame: Frame {
                 class: None,
-                constant_pool: constant_pool,
+                constant_pool: HashMap::new(),
                 operand_stack: Vec::new(),
                 local_variables: Vec::new()},
             classes: HashMap::new(),
@@ -433,6 +433,19 @@ impl Runtime {
             unresolved_classes: Vec::new(),
             object_count: rand::random::<i32>(),
         };
+    }
+
+    pub fn reset_frames(&mut self) {
+        self.previous_frames = vec!(Frame {
+            class: None,
+            constant_pool: HashMap::new(),
+            operand_stack: Vec::new(),
+            local_variables: Vec::new()});
+        self.current_frame = Frame {
+            class: None,
+            constant_pool: HashMap::new(),
+            operand_stack: Vec::new(),
+            local_variables: Vec::new()};
     }
 
     pub fn get_next_object_code(&mut self) -> i32 {
@@ -2353,7 +2366,8 @@ fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Ve
 
 pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
     println!("Running");
-    let mut runtime = Runtime::new(class_paths.clone(), class.constant_pool.clone());
+    let mut runtime = Runtime::new(class_paths.clone());
+    runtime.current_frame.constant_pool = class.constant_pool.clone();
 
     try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
 
@@ -2364,12 +2378,18 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
     return Ok(());
 }
 
-pub fn run_method(class_paths: &Vec<String>, class_result: &ClassResult, method: &str, arguments: &Vec<Variable>, return_descriptor: String) -> Result<Variable, RunnerError> {
+pub fn get_runtime(class_paths: &Vec<String>) -> Runtime {
+    return Runtime::new(class_paths.clone());
+}
+
+pub fn run_method(runtime: &mut Runtime, class_result: &ClassResult, method: &str, arguments: &Vec<Variable>, return_descriptor: String) -> Result<Variable, RunnerError> {
     println!("Running method {} with {} arguments", method, arguments.len());
-    let mut runtime = Runtime::new(class_paths.clone(), class_result.constant_pool.clone());
+
+    runtime.reset_frames();
+    runtime.current_frame.constant_pool = class_result.constant_pool.clone();
 
     let name = try!(class_result.name());
-    let class = try!(bootstrap_class_and_dependencies(&mut runtime, name.as_str(), class_result));
+    let class = try!(bootstrap_class_and_dependencies(runtime, name.as_str(), class_result));
 
     runtime.current_frame.class = Some(class);
     for arg in arguments {
@@ -2393,7 +2413,7 @@ pub fn run_method(class_paths: &Vec<String>, class_result: &ClassResult, method:
     let code = try!(get_class_method_code(class_result, method, method_descriptor.as_str()));
 
     println!("Running method");
-    try!(do_run_method(method, &mut runtime, &code, 0));
+    try!(do_run_method(method, runtime, &code, 0));
 
     return Ok(pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().clone());
 }
