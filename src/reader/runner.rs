@@ -524,6 +524,7 @@ fn descriptor_to_type_name(string: &str) -> Result<String, RunnerError> {
 
     while array_depth > 0 {
         ret.push_str("[]");
+        array_depth = array_depth - 1;
     }
 
     return Ok(ret);
@@ -1076,7 +1077,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let ref caller_class = args[3];
             runnerPrint!(runtime, true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
 
-            let var = try!(make_class(runtime, descriptor.as_str()));
+            let var = try!(make_class(runtime, type_name_to_descriptor(&descriptor).as_str()));
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}

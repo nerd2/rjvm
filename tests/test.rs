@@ -36,8 +36,8 @@ mod tests {
     #[test]
     fn get_component_type() {
         let mut runtime = get_runtime(&vec!(String::from("./tests/")));
-        assert_eq!(run_method(&mut runtime, Path::new("tests/getComponentType.class"), "getComponentTypeCheck1", &Vec::new(), "Ljava/lang/String;").extract_string(), "LgetComponentType$A;");
-        assert_eq!(run_method(&mut runtime, Path::new("tests/getComponentType.class"), "getComponentTypeCheck2", &Vec::new(), "Ljava/lang/String;").extract_string(), "Z");
+        assert_eq!(run_method(&mut runtime, Path::new("tests/getComponentType.class"), "getComponentTypeCheck1", &Vec::new(), "Ljava/lang/String;").extract_string(), "getComponentType$A");
+        assert_eq!(run_method(&mut runtime, Path::new("tests/getComponentType.class"), "getComponentTypeCheck2", &Vec::new(), "Ljava/lang/String;").extract_string(), "boolean");
     }
 
     #[test]
