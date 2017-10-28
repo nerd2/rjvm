@@ -110,6 +110,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn class_get_declared() {
         let mut runtime = get_runtime(&vec!(String::from("./tests/")));
         assert_eq!(void_int_call(&mut runtime, "tests/clazz.class", "getDeclaredFieldsTest"), 0x3);
