@@ -1075,6 +1075,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let ref class_loader = args[2];
             let ref caller_class = args[3];
             runnerPrint!(runtime, true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
+
             let var = try!(make_class(runtime, descriptor.as_str()));
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
@@ -1246,8 +1247,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("sun/misc/VM", "initialize", "()V") => {}
         ("sun/reflect/Reflection", "getCallerClass", "()Ljava/lang/Class;") => {
             let class = runtime.previous_frames[runtime.previous_frames.len()-1].class.clone().unwrap();
-            let descriptor = String::from("L") + class.name.as_str() + ";";
-            let var = try!(make_class(runtime, descriptor.as_str()));
+            let var = try!(make_class(runtime, type_name_to_descriptor(&class.name).as_str()));
             runnerPrint!(runtime, true, 2, "BUILTIN: getCallerClass {}", var);
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
@@ -1607,7 +1607,22 @@ fn ldc(runtime: &mut Runtime, index: usize) -> Result<(), RunnerError> {
                 push_on_stack(&mut runtime.current_frame.operand_stack, var);
             }
             &ConstantPoolItem::CONSTANT_Class { index } => {
-                let descriptor = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                let constant_pool_descriptor = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                // Class descriptors are either:
+                // "ClassName"
+                // or
+                // "[[[[I"
+                // or
+                // "[[[[LClassName;"
+                // We first normalise this to a standard descriptor. Note we know it cannot be primitive
+                let mut descriptor;
+                if constant_pool_descriptor.chars().nth(0).unwrap() == '[' {
+                    descriptor = (*constant_pool_descriptor).clone();
+                } else {
+                    descriptor = 'L'.to_string();
+                    descriptor.push_str(constant_pool_descriptor.as_str());
+                    descriptor.push(';');
+                }
                 runnerPrint!(runtime, true, 2, "LDC class {}", descriptor);
                 let var = try!(make_class(runtime, descriptor.as_str()));
                 push_on_stack(&mut runtime.current_frame.operand_stack, var);
