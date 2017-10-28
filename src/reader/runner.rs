@@ -485,6 +485,50 @@ fn type_name_to_descriptor(name: &String) -> String {
     });
 }
 
+fn descriptor_to_type_name(string: &str) -> Result<String, RunnerError> {
+    let mut iter = string.chars();
+
+    let mut maybe_type_specifier = iter.next();
+
+    if maybe_type_specifier.is_none() {
+        return Err(RunnerError::ClassInvalid("Type specifier blank"));
+    }
+
+    let mut array_depth = 0;
+    while maybe_type_specifier.unwrap_or(' ') == '[' {
+        array_depth = array_depth + 1;
+        maybe_type_specifier = iter.next();
+    }
+
+    if maybe_type_specifier.is_none() {
+        return Err(RunnerError::ClassInvalid2(format!("Type specifier invalid {}", string)));
+    }
+
+    let mut ret : String =
+        match maybe_type_specifier.unwrap() {
+            'L' => iter.take_while(|x| *x != ';').collect(),
+            _ => {
+                String::from(match maybe_type_specifier.unwrap() {
+                    'B' => "byte",
+                    'C' => "char",
+                    'D' => "double",
+                    'F' => "float",
+                    'I' => "int",
+                    'J' => "long",
+                    'S' => "short",
+                    'Z' => "boolean",
+                    _ => return Err(RunnerError::ClassInvalid2(format!("Type specifier invalid {}", string)))
+                })
+            }
+        };
+
+    while array_depth > 0 {
+        ret.push_str("[]");
+    }
+
+    return Ok(ret);
+}
+
 fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, RunnerError> {
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
@@ -1376,7 +1420,7 @@ fn get_primitive_class(runtime: &mut Runtime, descriptor: String) -> Result<Vari
     let var = try!(construct_object(runtime, &"java/lang/Class"));
     runtime.class_objects.insert(descriptor.clone(), var.clone());
 
-    let name_object = try!(make_string(runtime, descriptor.as_str()));
+    let name_object = try!(make_string(runtime, try!(descriptor_to_type_name(descriptor.as_str())).as_str()));
     try!(put_field(var.to_ref(), &"java/lang/Class", "name", try!(string_intern(runtime, &name_object))));
     try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
     let members = &var.to_ref().members;
@@ -1398,7 +1442,7 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
     let var = try!(construct_object(runtime, &"java/lang/Class"));
     runtime.class_objects.insert(String::from(descriptor), var.clone());
 
-    let name_object = try!(make_string(runtime, descriptor));
+    let name_object = try!(make_string(runtime, try!(descriptor_to_type_name(descriptor)).as_str()));
     try!(put_field(var.to_ref(), &"java/lang/Class", "name", try!(string_intern(runtime, &name_object))));
     try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
     let members = &var.to_ref().members;

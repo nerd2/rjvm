@@ -91,7 +91,7 @@ mod tests {
     #[test]
     fn string_basics() {
         let mut runtime = get_runtime(&vec!(String::from("./tests/")));
-        //assert_eq!(run_method(&mut runtime, Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), "C"), Variable::Int('a' as i32));
+        assert_eq!(run_method(&mut runtime, Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), "C"), Variable::Int('a' as i32));
         assert_eq!(run_method(&mut runtime, Path::new("tests/string.class"), "copy", &Vec::new(), "C"), Variable::Int('o' as i32));
         //assert_eq!(run_method(&mut runtime, Path::new("tests/string.class"), "getBytes", &Vec::new(), "B"), Variable::Byte('e' as u8));
         assert_ne!(run_method(&mut runtime, Path::new("tests/string.class"), "getHashCode", &Vec::new(), "I"), Variable::Int(0));
@@ -110,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn class_getDeclared() {
+    fn class_get_declared() {
         let mut runtime = get_runtime(&vec!(String::from("./tests/")));
         assert_eq!(void_int_call(&mut runtime, "tests/clazz.class", "getDeclaredFieldsTest"), 0x3);
     }
