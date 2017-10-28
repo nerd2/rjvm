@@ -11,19 +11,14 @@ extern crate byteorder;
 extern crate rand;
 use reader::class::*;
 use std;
+use std::collections::HashMap;
+use std::cell::RefCell;
 use std::fmt;
 use std::io;
 use std::io::Cursor;
-use std::ops::Add;
-use std::ops::Sub;
-use std::ops::Mul;
-use std::ops::Div;
-use std::ops::Rem;
 use std::ops::BitAnd;
 use std::ops::BitOr;
 use std::ops::BitXor;
-use std::collections::HashMap;
-use std::cell::RefCell;
 use std::rc::Rc;
 use std::rc::Weak;
 use std::path::Path;
@@ -33,8 +28,8 @@ use glob::glob;
 use self::byteorder::{BigEndian, ReadBytesExt};
 
 macro_rules! runnerPrint {
-    ($runtime:expr, $enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$runtime.previous_frames.len() {print!("|"); } println!($fmt); } }};
-    ($runtime:expr, $enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$runtime.previous_frames.len() {print!("|"); } println!($fmt, $($arg)*); } }};
+    ($runtime:expr, $enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$runtime.previous_frames.len() {print!("|"); } print!("{}: ", $runtime.count); println!($fmt); } }};
+    ($runtime:expr, $enabled:expr, $level:expr, $fmt:expr, $($arg:tt)*) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$runtime.previous_frames.len() {print!("|"); } print!("{}: ", $runtime.count); println!($fmt, $($arg)*); } }};
 }
 
 #[derive(Debug)]
@@ -370,7 +365,7 @@ impl Variable {
         return match self {
             &Variable::Reference(ref obj) => format!("Reference {}", obj),
             &Variable::ArrayReference(ref array) => format!("ArrayReference {}", array),
-            _ => format!("Other {:?}", self)
+            _ => format!("{:?}", self)
         }
     }
 
@@ -855,13 +850,7 @@ fn astore<F>(desc: &str, runtime: &mut Runtime, converter: F) -> Result<(), Runn
     return Ok(());
 }
 
-// TODO: Overflow checks
-fn add<F>(a: F, b: F) -> <F as std::ops::Add>::Output where F: Add { a+b }
-fn sub<F>(a: F, b: F) -> <F as std::ops::Sub>::Output where F: Sub { b-a }
-fn mul<F>(a: F, b: F) -> <F as std::ops::Mul>::Output where F: Mul { a*b }
-fn div<F>(a: F, b: F) -> <F as std::ops::Div>::Output where F: Div { b/a }
-fn rem<F>(a: F, b: F) -> <F as std::ops::Rem>::Output where F: Rem { b%a }
-fn and<F>(a: F, b: F) -> <F as std::ops::BitAnd>::Output where F: BitAnd { b&a }
+fn and<F>(a: F, b: F) -> <F as std::ops::BitAnd>::Output where F: BitAnd { a&b }
 fn or<F>(a: F, b: F) -> <F as std::ops::BitOr>::Output where F: BitOr { a|b }
 fn xor<F>(a: F, b: F) -> <F as std::ops::BitXor>::Output where F: BitXor { a^b }
 
@@ -874,7 +863,7 @@ fn maths_instr<F, G, H, K>(desc: &str, runtime: &mut Runtime, creator: F, extrac
     let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     runnerPrint!(runtime, true, 2, "{} {} {}", desc, popped1, popped2);
-    push_on_stack(&mut runtime.current_frame.operand_stack, creator(operation(extractor(&popped1), extractor(&popped2))));
+    push_on_stack(&mut runtime.current_frame.operand_stack, creator(operation(extractor(&popped2), extractor(&popped1))));
 }
 
 fn maths_instr_2<F, G, H, I, J, K, L>(desc: &str, runtime: &mut Runtime, creator: F, extractor1: G, extractor2: H, operation: I)
@@ -882,12 +871,12 @@ fn maths_instr_2<F, G, H, I, J, K, L>(desc: &str, runtime: &mut Runtime, creator
         F: Fn(L) -> Variable,
         G: Fn(&Variable) -> J,
         H: Fn(&Variable) -> K,
-        I: Fn(J, K) -> L
+        I: Fn(K, J) -> L
 {
     let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
     runnerPrint!(runtime, true, 2, "{} {} {}", desc, popped1, popped2);
-    push_on_stack(&mut runtime.current_frame.operand_stack, creator(operation(extractor1(&popped1), extractor2(&popped2))));
+    push_on_stack(&mut runtime.current_frame.operand_stack, creator(operation(extractor2(&popped2), extractor1(&popped1))));
 }
 
 fn single_pop_instr<F, G, H, I, J>(desc: &str, runtime: &mut Runtime, creator: F, extractor: G, operation: H)
@@ -1730,26 +1719,26 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                     push_on_stack(&mut runtime.current_frame.operand_stack, peek1);
                 }
             }
-            96 => maths_instr("IADD", runtime, Variable::Int, Variable::to_int, add),
-            97 => maths_instr("LADD", runtime, Variable::Long, Variable::to_long, add),
-            98 => maths_instr("FADD", runtime, Variable::Float, Variable::to_float, add),
-            99 => maths_instr("DADD", runtime, Variable::Double, Variable::to_double, add),
-            100 => maths_instr("ISUB", runtime, Variable::Int, Variable::to_int, sub),
-            101 => maths_instr("LSUB", runtime, Variable::Long, Variable::to_long, sub),
-            102 => maths_instr("FSUB", runtime, Variable::Float, Variable::to_float, sub),
-            103 => maths_instr("DSUB", runtime, Variable::Double, Variable::to_double, sub),
-            104 => maths_instr("IMUL", runtime, Variable::Int, Variable::to_int, mul),
-            105 => maths_instr("LMUL", runtime, Variable::Long, Variable::to_long, mul),
-            106 => maths_instr("FMUL", runtime, Variable::Float, Variable::to_float, mul),
-            107 => maths_instr("DMUL", runtime, Variable::Double, Variable::to_double, mul),
-            108 => maths_instr("IDIV", runtime, Variable::Int, Variable::to_int, div),
-            109 => maths_instr("LDIV", runtime, Variable::Long, Variable::to_long, div),
-            110 => maths_instr("FDIV", runtime, Variable::Float, Variable::to_float, div),
-            111 => maths_instr("DDIV", runtime, Variable::Double, Variable::to_double, div),
-            112 => maths_instr("IREM", runtime, Variable::Int, Variable::to_int, rem),
-            113 => maths_instr("LREM", runtime, Variable::Long, Variable::to_long, rem),
-            114 => maths_instr("FREM", runtime, Variable::Float, Variable::to_float, rem),
-            115 => maths_instr("DREM", runtime, Variable::Double, Variable::to_double, rem),
+            96 => maths_instr("IADD", runtime, Variable::Int, Variable::to_int, i32::wrapping_add),
+            97 => maths_instr("LADD", runtime, Variable::Long, Variable::to_long, i64::wrapping_add),
+            98 => maths_instr("FADD", runtime, Variable::Float, Variable::to_float, std::ops::Add::add),
+            99 => maths_instr("DADD", runtime, Variable::Double, Variable::to_double, std::ops::Add::add),
+            100 => maths_instr("ISUB", runtime, Variable::Int, Variable::to_int, i32::wrapping_sub),
+            101 => maths_instr("LSUB", runtime, Variable::Long, Variable::to_long, i64::wrapping_sub),
+            102 => maths_instr("FSUB", runtime, Variable::Float, Variable::to_float, std::ops::Sub::sub),
+            103 => maths_instr("DSUB", runtime, Variable::Double, Variable::to_double, std::ops::Sub::sub),
+            104 => maths_instr("IMUL", runtime, Variable::Int, Variable::to_int, i32::wrapping_mul),
+            105 => maths_instr("LMUL", runtime, Variable::Long, Variable::to_long, i64::wrapping_mul),
+            106 => maths_instr("FMUL", runtime, Variable::Float, Variable::to_float, std::ops::Mul::mul),
+            107 => maths_instr("DMUL", runtime, Variable::Double, Variable::to_double, std::ops::Mul::mul),
+            108 => maths_instr("IDIV", runtime, Variable::Int, Variable::to_int, i32::wrapping_div),
+            109 => maths_instr("LDIV", runtime, Variable::Long, Variable::to_long, i64::wrapping_div),
+            110 => maths_instr("FDIV", runtime, Variable::Float, Variable::to_float, std::ops::Div::div),
+            111 => maths_instr("DDIV", runtime, Variable::Double, Variable::to_double, std::ops::Div::div),
+            112 => maths_instr("IREM", runtime, Variable::Int, Variable::to_int, i32::wrapping_rem),
+            113 => maths_instr("LREM", runtime, Variable::Long, Variable::to_long, i64::wrapping_rem),
+            114 => maths_instr("FREM", runtime, Variable::Float, Variable::to_float, std::ops::Rem::rem),
+            115 => maths_instr("DREM", runtime, Variable::Double, Variable::to_double, std::ops::Rem::rem),
             116 => single_pop_instr("INEG", runtime, Variable::Int, Variable::to_int, |x| 0 - x),
             117 => single_pop_instr("LNEG", runtime, Variable::Long, Variable::to_long, |x| 0 - x),
             118 => single_pop_instr("FNEG", runtime, Variable::Float, Variable::to_float, |x| 0.0 - x),
@@ -1891,7 +1880,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let obj = var.to_ref();
                 let f = try!(get_field(&obj, class_name.as_str(), field_name.as_str()));
-                runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}' field:'{}'", class_name, field_name, typ, obj, f);
+                runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}' result:'{}'", class_name, field_name, typ, obj, f);
                 push_on_stack(&mut runtime.current_frame.operand_stack, f);
             }
             181 => {
@@ -2119,7 +2108,7 @@ fn load_class(runtime: &mut Runtime, name: &str) -> Result<Rc<Class>, RunnerErro
 }
 
 fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError>  {
-    let debug = true;
+    let debug = false;
     let mut classes_to_process : Vec<Rc<Class>> = Vec::new();
 
     let new_class = Rc::new(Class::new(&String::from(name), class_result));

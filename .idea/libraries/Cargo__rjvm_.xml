@@ -1,8 +1,14 @@
 <component name="libraryTable">
   <library name="Cargo &lt;rjvm&gt;">
     <CLASSES>
-      <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/byteorder-1.0.0" />
       <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/glob-0.2.11" />
+      <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/libc-0.2.32" />
+      <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/fuchsia-zircon-0.2.1" />
+      <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/bitflags-0.7.0" />
+      <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/assert_approx_eq-1.0.0" />
+      <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/rand-0.3.17" />
+      <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/byteorder-1.0.0" />
+      <root url="file://$USER_HOME$/.cargo/registry/src/github.com-1ecc6299db9ec823/fuchsia-zircon-sys-0.2.0" />
     </CLASSES>
     <JAVADOC />
     <SOURCES />
