@@ -1884,6 +1884,27 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 runnerPrint!(runtime, true, 2, "BRANCH from {} to {}", current_position, new_pos);
                 buf.set_position(new_pos);
             }
+            170 => {
+                let pos = buf.position();
+                buf.set_position((pos + 3) & !3);
+                let default = try!(buf.read_u32::<BigEndian>());
+                let low = try!(buf.read_u32::<BigEndian>());
+                let high = try!(buf.read_u32::<BigEndian>());
+                let value_int = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int() as u32;
+                runnerPrint!(runtime, true, 2, "TABLESWITCH {} {} {} {}", default, low, high, value_int);
+                if value_int < low || value_int > high {
+                    let new_pos = (current_position as i64 + default as i64) as u64;
+                    runnerPrint!(runtime, true, 2, "No match so BRANCH from {} to {}", current_position, new_pos);
+                    buf.set_position(new_pos);
+                } else {
+                    let pos = buf.position();
+                    buf.set_position(pos + (value_int - low) as u64 * 4);
+                    let jump = try!(buf.read_u32::<BigEndian>());
+                    let new_pos = (current_position as i64 + jump as i64) as u64;
+                    runnerPrint!(runtime, true, 2, "Match so BRANCH from {} to {}", current_position, new_pos);
+                    buf.set_position(new_pos);
+                }
+            }
             171 => {
                 let pos = buf.position();
                 buf.set_position((pos + 3) & !3);

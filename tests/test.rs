@@ -89,6 +89,18 @@ mod tests {
     }
 
     #[test]
+    fn tableswitch() {
+        let mut runtime = get_runtime(&vec!(String::from("./tests/")));
+        assert_eq!(run_method(&mut runtime, Path::new("tests/tableswitch.class"), "check", &vec!(Variable::Int(1)), "Z"), Variable::Int(0));
+        assert_eq!(run_method(&mut runtime, Path::new("tests/tableswitch.class"), "check", &vec!(Variable::Int(10)), "Z"), Variable::Int(0));
+        assert_eq!(run_method(&mut runtime, Path::new("tests/tableswitch.class"), "check", &vec!(Variable::Int(11)), "Z"), Variable::Int(1));
+        assert_eq!(run_method(&mut runtime, Path::new("tests/tableswitch.class"), "check", &vec!(Variable::Int(13)), "Z"), Variable::Int(1));
+        assert_eq!(run_method(&mut runtime, Path::new("tests/tableswitch.class"), "check", &vec!(Variable::Int(15)), "Z"), Variable::Int(1));
+        assert_eq!(run_method(&mut runtime, Path::new("tests/tableswitch.class"), "check", &vec!(Variable::Int(16)), "Z"), Variable::Int(0));
+        assert_eq!(run_method(&mut runtime, Path::new("tests/tableswitch.class"), "check", &vec!(Variable::Int(130)), "Z"), Variable::Int(0));
+    }
+
+    #[test]
     fn string_basics() {
         let mut runtime = get_runtime(&vec!(String::from("./tests/")));
         assert_eq!(run_method(&mut runtime, Path::new("tests/string.class"), "newAppendExtract", &Vec::new(), "C"), Variable::Int('a' as i32));
