@@ -542,7 +542,7 @@ fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Resu
             }
             _ => {
                 debugPrint!(true, 1, "CP item at index {} is not utf8", index);
-                return Err(RunnerError::ClassInvalid("Error"));
+                return Err(RunnerError::ClassInvalid2(format!("CP item at index {} is not utf8", index)));
             }
         }
     }
@@ -567,7 +567,7 @@ fn get_cp_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> R
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP class {}", index);
-        return Err(RunnerError::ClassInvalid("Error"));
+        return Err(RunnerError::ClassInvalid2(format!("Missing CP class {}", index)));
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Class {index} => {
@@ -577,9 +577,7 @@ fn get_cp_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> R
                 return Ok(name_str);
             }
             _ => {
-                println!("Index {} is not a class", index);
-
-                return Err(RunnerError::ClassInvalid("Error"));
+                return Err(RunnerError::ClassInvalid2(format!("Index {} is not a class", index)));
             }
         }
     }
@@ -591,7 +589,7 @@ fn get_cp_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP name & type {}", index);
-        return Err(RunnerError::ClassInvalid("Error"));
+        return Err(RunnerError::ClassInvalid2(format!("Missing CP name & type {}", index)));
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_NameAndType {name_index, descriptor_index} => {
@@ -602,9 +600,7 @@ fn get_cp_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u
                 return Ok((name_str, type_str));
             }
             _ => {
-                println!("Index {} is not a name and type", index);
-
-                return Err(RunnerError::ClassInvalid("Error"));
+                return Err(RunnerError::ClassInvalid2(format!("Index {} is not a name and type", index)));
             }
         }
     }
@@ -634,7 +630,7 @@ fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> 
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP method {}", index);
-        return Err(RunnerError::ClassInvalid("Error"));
+        return Err(RunnerError::ClassInvalid2(format!("Missing CP method {}", index)));
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Methodref {class_index, name_and_type_index} => {
@@ -648,8 +644,7 @@ fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> 
                 return Ok((class_str, name_str, type_str));
             }
             _ => {
-                println!("Index {} is not a method", index);
-                return Err(RunnerError::ClassInvalid("Error"));
+                return Err(RunnerError::ClassInvalid2(format!("Index {} is not a method", index)));
             }
         }
     }
@@ -1598,7 +1593,7 @@ fn ldc(runtime: &mut Runtime, index: usize) -> Result<(), RunnerError> {
     let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
     if maybe_cp_entry.is_none() {
         runnerPrint!(runtime, true, 1, "LDC failed at index {}", index);
-        return Err(RunnerError::ClassInvalid("Error"));
+        return Err(RunnerError::ClassInvalid2(format!("LDC failed at index {}", index)));
     } else {
         match maybe_cp_entry.as_ref().unwrap() {
             &ConstantPoolItem::CONSTANT_String { index } => {
@@ -1697,7 +1692,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
                 if maybe_cp_entry.is_none() {
                     runnerPrint!(runtime, true, 1, "LDC2W failed at index {}", index);
-                    return Err(RunnerError::ClassInvalid("Error"));
+                    return Err(RunnerError::ClassInvalid2(format!("LDC2W failed at index {}", index)));
                 } else {
                     match maybe_cp_entry.as_ref().unwrap() {
                         &ConstantPoolItem::CONSTANT_Long { value } => {
@@ -2070,7 +2065,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let maybe_cp_entry = runtime.current_frame.constant_pool.get(&index);
                 if maybe_cp_entry.is_none() {
                     runnerPrint!(runtime, true, 1, "Missing CP class {}", index);
-                    return Err(RunnerError::ClassInvalid("Error"));
+                    return Err(RunnerError::ClassInvalid2(format!("Missing CP class {}", index)));
                 } else {
                     // TODO: CHECKCAST (noop)
                     push_on_stack(&mut runtime.current_frame.operand_stack, var);
@@ -2289,11 +2284,11 @@ fn initialise_class_stage_1(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
     if class.cr.super_class_index > 0 {
         let super_class_name = try!(get_cp_class(&class.cr.constant_pool, class.cr.super_class_index));
         runnerPrint!(runtime, debug, 3, "Class {} has superclass {}", class.name, super_class_name);
-        *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&*super_class_name).ok_or(RunnerError::ClassInvalid("Error"))).clone());
+        *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&*super_class_name).ok_or(RunnerError::ClassInvalid2(format!("Couldn't get superclass {}", super_class_name)))).clone());
     } else {
         if class.name != "java/lang/Object" {
             runnerPrint!(runtime, debug, 3, "Class {} has superclass {}", class.name, "java/lang/Object");
-            *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid("Error"))).clone());
+            *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid("Couldn't get object superclass"))).clone());
         }
     }
     return Ok(());
@@ -2338,7 +2333,7 @@ fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolv
 
     if maybe_type_specifier.is_none() {
         runnerPrint!(runtime, true, 2, "Type specifier blank");
-        return Err(RunnerError::ClassInvalid("Error"));
+        return Err(RunnerError::ClassInvalid("Type specifier blank"));
     }
 
     let mut array_depth = 0;
@@ -2349,7 +2344,7 @@ fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolv
 
     if maybe_type_specifier.is_none() {
         runnerPrint!(runtime, true, 2, "Type specifier invalid {}", string);
-        return Err(RunnerError::ClassInvalid("Error"));
+        return Err(RunnerError::ClassInvalid2(format!("Type specifier invalid {}", string)));
     }
 
     let variable;
@@ -2411,7 +2406,7 @@ fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Ve
 
     if iter.next().unwrap_or(' ') != '(' {
         runnerPrint!(runtime, true, 2, "Type {} invalid", string);
-        return Err(RunnerError::ClassInvalid("Error"));
+        return Err(RunnerError::ClassInvalid2(format!("Type {} invalid", string)));
     }
 
     let mut parameters : Vec<Variable> = Vec::new();
