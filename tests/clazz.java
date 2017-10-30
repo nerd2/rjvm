@@ -5,21 +5,11 @@ public class clazz {
     private int x = 0;
     private int y = 0;
 
-    private static int getDeclaredFieldsTest() {
-        clazz a = new clazz();
+    private static int getNumberOfFields() {
+        return clazz.class.getDeclaredFields().length;
+    }
 
-        Field[] fields = clazz.class.getDeclaredFields();
-        int x = 1;
-        for (Field f : fields) {
-            f.setAccessible(true);
-            try {
-                f.setInt(a, x);
-            } catch (IllegalAccessException e) {
-
-            }
-            x++;
-        }
-
-        return a.x + a.y;
+    private static String getNameOfFirstField() {
+        return clazz.class.getDeclaredFields()[0].getName();
     }
 }

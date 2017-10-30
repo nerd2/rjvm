@@ -729,8 +729,7 @@ fn construct_null_object(runtime: &mut Runtime, class: Rc<Class>) -> Result<Vari
 }
 
 fn construct_null_object_by_name(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
-    let class = try!(load_class(runtime, name));
-    return construct_null_object(runtime, class);
+    return parse_single_type_string(runtime, name, true);
 }
 
 fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
@@ -1084,6 +1083,44 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, var);
         }
         ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
+        ("java/lang/Class", "getDeclaredFields0", "(Z)[Ljava/lang/reflect/Field;") => {
+            let class_obj = args[0].to_ref();
+            let class = class_obj.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+            let public_only = args[1].to_bool();
+
+            let mut field_objects : Vec<Variable> = Vec::new();
+            for field in &class.cr.fields {
+                if public_only && (field.access_flags & ACC_PUBLIC == 0) {
+                    continue;
+                }
+
+                let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
+                let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+                let field_object = try!(make_field(runtime, name_string, descriptor_string, field.access_flags));
+                field_objects.push(field_object);
+            }
+            let fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", Some(field_objects)));
+            push_on_stack(&mut runtime.current_frame.operand_stack, fields_array);
+        }
+        ("java/lang/Class", "getDeclaredMethods0", "(Z)[Ljava/lang/reflect/Method;") => {
+            let class_obj = args[0].to_ref();
+            let class = class_obj.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+            let public_only = args[1].to_bool();
+
+            let mut method_objects : Vec<Variable> = Vec::new();
+            for method in &class.cr.methods {
+                if public_only && (method.access_flags & ACC_PUBLIC == 0) {
+                    continue;
+                }
+
+                let name_string = try!(get_cp_str(&class.cr.constant_pool, method.name_index));
+                let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, method.descriptor_index));
+                let methods_object = try!(make_method(runtime, name_string, descriptor_string, method.access_flags));
+                method_objects.push(methods_object);
+            }
+            let methods_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Method", Some(method_objects)));
+            push_on_stack(&mut runtime.current_frame.operand_stack, methods_array);
+        }
         ("java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: arrayCopy {} {} {} {} {}", args[0], args[1], args[2], args[3], args[4]);
 
@@ -1462,34 +1499,6 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
     match subtype {
         Variable::Reference(ref obj) => {
             let class = obj.type_ref.clone();
-            let reflection_data_object = try!(construct_object(runtime, &"java/lang/Class$ReflectionData"));
-            {
-                let mut field_objects : Vec<Variable> = Vec::new();
-                for field in &class.cr.fields {
-                    let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-                    let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
-                    let field_object = try!(make_field(runtime, name_string, descriptor_string, field.access_flags));
-                    field_objects.push(field_object);
-                }
-                let declared_fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", Some(field_objects)));
-                try!(put_field(runtime, reflection_data_object.to_ref(), &"java/lang/Class$ReflectionData", "declaredFields", declared_fields_array));
-            }
-            {
-                let mut method_objects : Vec<Variable> = Vec::new();
-                for method in &class.cr.methods {
-                    let name_string = try!(get_cp_str(&class.cr.constant_pool, method.name_index));
-                    let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, method.descriptor_index));
-                    let methods_object = try!(make_method(runtime, name_string, descriptor_string, method.access_flags));
-                    method_objects.push(methods_object);
-                }
-                let declared_methods_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Method", Some(method_objects)));
-                try!(put_field(runtime, reflection_data_object.to_ref(), &"java/lang/Class$ReflectionData", "declaredMethods", declared_methods_array));
-            }
-
-            let soft_reference_object = try!(construct_object(runtime, &"java/lang/ref/SoftReference"));
-            try!(put_field(runtime, soft_reference_object.to_ref(), &"java/lang/ref/SoftReference", "referent", reflection_data_object));
-
-            try!(put_field(runtime, var.to_ref(), &"java/lang/Class", "reflectionData", soft_reference_object));
             members.borrow_mut().insert(String::from("__class"), try!(construct_null_object(runtime, class)));
         },
         Variable::ArrayReference(ref array_obj) => {
@@ -2368,7 +2377,8 @@ fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolv
                     String::from(string)
                 };
             if resolve {
-                variable = try!(construct_null_object_by_name(runtime, type_string.as_str()));
+                let class = try!(load_class(runtime, type_string.as_str()));
+                variable = try!(construct_null_object(runtime, class));
             } else {
                 if runtime.classes.contains_key(type_string.as_str()) {
                     let class = runtime.classes.get(type_string.as_str()).unwrap().clone();
@@ -2395,7 +2405,6 @@ fn parse_single_type_string(runtime: &mut Runtime, type_string: &str, resolve: b
         } else if variable.is_unresolved() {
             return Ok(Variable::UnresolvedReference(String::from(type_string)));
         } else {
-            println!("Constructing array!!!");
             return Ok(try!(construct_array(runtime, variable.to_ref().type_ref.clone(), None)));
         }
     } else {
