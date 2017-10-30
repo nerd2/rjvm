@@ -688,29 +688,29 @@ fn construct_char_array(runtime: &mut Runtime, s: &str) -> Variable {
     return Variable::ArrayReference(Rc::new(array_object));
 }
 
-fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Vec<Variable>) -> Result<Variable, RunnerError> {
+fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
     let array_object = ArrayObject {
-        is_null: false,
+        is_null: data.is_none(),
         element_type_ref: Some(class.clone()),
         element_type_str: generate_class_descriptor(&class),
-        elements: RefCell::new(data),
+        elements: RefCell::new(data.unwrap_or(Vec::new())),
         code: runtime.get_next_object_code()
     };
     return Ok(Variable::ArrayReference(Rc::new(array_object)));
 }
 
-fn construct_array_by_name(runtime: &mut Runtime, name: &str, data: Vec<Variable>) -> Result<Variable, RunnerError> {
+fn construct_array_by_name(runtime: &mut Runtime, name: &str, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
     let class = try!(load_class(runtime, name));
     return construct_array(runtime, class, data);
 }
 
-fn construct_primitive_array(runtime: &mut Runtime, element_type: &str, data: Vec<Variable>) -> Result<Variable, RunnerError> {
+fn construct_primitive_array(runtime: &mut Runtime, element_type: &str, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
     // TODO
     let array_object = ArrayObject {
-        is_null: false,
+        is_null: data.is_none(),
         element_type_ref: None,
         element_type_str: String::from(element_type),
-        elements: RefCell::new(data),
+        elements: RefCell::new(data.unwrap_or(Vec::new())),
         code: runtime.get_next_object_code()
     };
     return Ok(Variable::ArrayReference(Rc::new(array_object)));
@@ -1471,7 +1471,7 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
                     let field_object = try!(make_field(runtime, name_string, descriptor_string, field.access_flags));
                     field_objects.push(field_object);
                 }
-                let declared_fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", field_objects));
+                let declared_fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", Some(field_objects)));
                 try!(put_field(runtime, reflection_data_object.to_ref(), &"java/lang/Class$ReflectionData", "declaredFields", declared_fields_array));
             }
             {
@@ -1482,7 +1482,7 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
                     let methods_object = try!(make_method(runtime, name_string, descriptor_string, method.access_flags));
                     method_objects.push(methods_object);
                 }
-                let declared_methods_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Method", method_objects));
+                let declared_methods_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Method", Some(method_objects)));
                 try!(put_field(runtime, reflection_data_object.to_ref(), &"java/lang/Class$ReflectionData", "declaredMethods", declared_methods_array));
             }
 
@@ -1511,6 +1511,8 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
 }
 
 fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    let debug = false;
+    runnerPrint!(runtime, debug, 2, "Put Static Field {} {} {}", class_name, field_name, value);
     let class_result = try!(load_class(runtime, class_name));
     let mut statics = class_result.statics.borrow_mut();
     if !statics.contains_key(field_name) {
@@ -1521,7 +1523,8 @@ fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, value: 
 }
 
 fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
-    runnerPrint!(runtime, true, 2, "Put Field {} {} {}", class_name, field_name, value);
+    let debug = false;
+    runnerPrint!(runtime, debug, 2, "Put Field {} {} {}", class_name, field_name, value);
     let super_obj = try!(get_super_obj(obj, class_name));
     let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
     let mut members = super_obj_with_field.members.borrow_mut();
@@ -1530,7 +1533,8 @@ fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_nam
 }
 
 fn get_field(runtime: &mut Runtime, obj: &Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
-    runnerPrint!(runtime, true, 2, "Get Field {} {}", class_name, field_name);
+    let debug = false;
+    runnerPrint!(runtime, debug, 2, "Get Field {} {}", class_name, field_name);
     let super_obj = try!(get_super_obj(obj.clone(), class_name));
     let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
     let mut members = super_obj_with_field.members.borrow_mut();
@@ -2057,7 +2061,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 for _c in 0..count {
                     v.push(var.clone());
                 }
-                let array_obj = try!(construct_primitive_array(runtime, type_str.to_string().as_str(),v));
+                let array_obj = try!(construct_primitive_array(runtime, type_str.to_string().as_str(), Some(v)));
                 push_on_stack(&mut runtime.current_frame.operand_stack, array_obj);
             }
             189 => {
@@ -2071,7 +2075,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 for _c in 0..count {
                     v.push(try!(construct_null_object(runtime, class.clone())));
                 }
-                let array_obj = try!(construct_array(runtime, class, v));
+                let array_obj = try!(construct_array(runtime, class, Some(v)));
                 push_on_stack(&mut runtime.current_frame.operand_stack, array_obj);
             }
             190 => {
@@ -2379,19 +2383,20 @@ fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolv
     return Ok((variable, array_depth));
 }
 
-fn parse_single_type_string(runtime: &mut Runtime, string: &str, resolve: bool) -> Result<Variable, RunnerError> {
-    let (variable, array_depth) = try!(extract_type_info_from_descriptor(runtime, string, resolve));
+fn parse_single_type_string(runtime: &mut Runtime, type_string: &str, resolve: bool) -> Result<Variable, RunnerError> {
+    let (variable, array_depth) = try!(extract_type_info_from_descriptor(runtime, type_string, resolve));
 
     if array_depth > 0 {
         if array_depth > 1 {
             runnerPrint!(runtime, true, 1, "Warning: >1 array depth, is this right?");
         }
         if variable.is_primitive() {
-            return Ok(try!(construct_primitive_array(runtime, variable.get_descriptor().as_str(), Vec::new())));
+            return Ok(try!(construct_primitive_array(runtime, variable.get_descriptor().as_str(), None)));
         } else if variable.is_unresolved() {
-            return Ok(variable);
+            return Ok(Variable::UnresolvedReference(String::from(type_string)));
         } else {
-            return Ok(try!(construct_array(runtime, variable.to_ref().type_ref.clone(), Vec::new())));
+            println!("Constructing array!!!");
+            return Ok(try!(construct_array(runtime, variable.to_ref().type_ref.clone(), None)));
         }
     } else {
         return Ok(variable);

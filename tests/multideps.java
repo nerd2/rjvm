@@ -1,6 +1,6 @@
 public class multideps {
     public static class A {
-        public static B b;
+        public static B[] b;
         public static C c;
         public static int y;
 
@@ -25,9 +25,13 @@ public class multideps {
         public static B b;
     }
 
+    private static B[] getBArray() {
+        return A.b;
+    }
+
     public static int test() {
-        if (A.b != null) {
-            return A.b.z;
+        if (getBArray() != null) {
+            return getBArray()[0].z;
         } else {
             return A.y;
         }
