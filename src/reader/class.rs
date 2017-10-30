@@ -58,10 +58,10 @@ pub enum ConstantPoolItem {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ExceptionItem {
-    start_pc: u16,
-    end_pc: u16,
-    handler_pc: u16,
-    catch_type: u16
+    pub start_pc: u16,
+    pub end_pc: u16,
+    pub handler_pc: u16,
+    pub catch_type: u16
 }
 
 #[derive(Clone, Debug, PartialEq)]

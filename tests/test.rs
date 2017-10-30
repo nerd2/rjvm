@@ -110,6 +110,12 @@ mod tests {
     }
 
     #[test]
+    fn try_catch() {
+        let mut runtime = get_runtime(&vec!(String::from("./tests/")));
+        assert_eq!(void_int_call(&mut runtime, "tests/trycatch.class", "test"), 0x2);
+    }
+
+    #[test]
     fn string_intern() {
         let mut runtime = get_runtime(&vec!(String::from("./tests/")));
         assert_eq!(void_int_call(&mut runtime, "tests/string.class", "intern"), 0x2);
