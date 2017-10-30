@@ -820,8 +820,8 @@ fn extract_from_char_array(var: &Variable) -> Result<String, RunnerError> {
     }
 }
 
-fn extract_from_string(obj: &Rc<Object>) -> Result<String, RunnerError> {
-    let field = try!(get_field(obj, "java/lang/String", "value"));
+fn extract_from_string(runtime: &mut Runtime, obj: &Rc<Object>) -> Result<String, RunnerError> {
+    let field = try!(get_field(runtime, obj, "java/lang/String", "value"));
     let string = try!(extract_from_char_array(&field));
     return Ok(string);
 }
@@ -958,7 +958,7 @@ fn get_obj_field(mut obj: Rc<Object>, field_name: &str) -> Result<Rc<Object>, Ru
     while {let members = obj.members.borrow(); !members.contains_key(field_name) } {
         let new_obj = obj.super_class.borrow().clone();
         if new_obj.is_none() {
-            return Err(RunnerError::ClassInvalid2(format!("Couldn't find field {} in class {}", field_name, class_name)));
+            return Err(RunnerError::ClassInvalid2(format!("Couldn't find field '{}' in class {}", field_name, class_name)));
         }
         obj = new_obj.unwrap();
     }
@@ -969,12 +969,12 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
     while obj.type_ref.name != class_name && obj.super_class.borrow().is_some() {
         let new_obj = obj.super_class.borrow().clone().unwrap();
         obj = new_obj;
-        debugPrint!(false, 3, "Class didn't match, checking {} now)", obj.type_ref.name);
+        debugPrint!(false, 3, "Class didn't match, checking '{}' now)", obj.type_ref.name);
     }
 
     if obj.type_ref.name != class_name {
-        debugPrint!(true, 1, "Expected object on stack with class name {} but got {}", class_name, obj.type_ref.name);
-        return Err(RunnerError::ClassInvalid2(format!("Couldn't find object on stack with class name {}", class_name)));
+        debugPrint!(true, 1, "Expected object on stack with class name '{}' but got '{}'", class_name, obj.type_ref.name);
+        return Err(RunnerError::ClassInvalid2(format!("Couldn't find object on stack with class name '{}'", class_name)));
     }
 
     return Ok(obj);
@@ -1004,7 +1004,7 @@ fn invoke_manual(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, m
 
 fn string_intern(runtime: &mut Runtime, var: &Variable) -> Result<Variable, RunnerError> {
     let obj = var.to_ref();
-    let string = try!(extract_from_string(&obj));
+    let string = try!(extract_from_string(runtime, &obj));
     if !runtime.string_interns.contains_key(&string) {
         runtime.string_interns.insert(string.clone(), var.clone());
     }
@@ -1034,7 +1034,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         }
         ("java/lang/Class", "getPrimitiveClass", "(Ljava/lang/String;)Ljava/lang/Class;") => {
             let obj = args[0].clone().to_ref();
-            let string = try!(extract_from_string(&obj));
+            let string = try!(extract_from_string(runtime, &obj));
             let descriptor = type_name_to_descriptor(&string);
             runnerPrint!(runtime, true, 2, "BUILTIN: getPrimitiveClass {} {}", string, descriptor);
             let var = try!(get_primitive_class(runtime, descriptor));
@@ -1066,7 +1066,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         },
         ("java/lang/Class", "forName0", "(Ljava/lang/String;ZLjava/lang/ClassLoader;Ljava/lang/Class;)Ljava/lang/Class;") => {
             let descriptor_string_obj = args[0].clone().to_ref();
-            let descriptor = try!(extract_from_string(&descriptor_string_obj));
+            let descriptor = try!(extract_from_string(runtime, &descriptor_string_obj));
             let initialize = args[1].to_bool();
             let ref class_loader = args[2];
             let ref caller_class = args[3];
@@ -1100,12 +1100,12 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("java/lang/System", "registerNatives", "()V") => {},
         ("java/lang/System", "loadLibrary", "(Ljava/lang/String;)V") => {
             let lib_string_obj = args[0].clone().to_ref();
-            let lib = try!(extract_from_string(&lib_string_obj));
+            let lib = try!(extract_from_string(runtime, &lib_string_obj));
             runnerPrint!(runtime, true, 2, "BUILTIN: loadLibrary {}", lib);
         }
         ("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;") => {
             let obj = args[0].clone().to_ref();
-            let string = try!(extract_from_string(&obj));
+            let string = try!(extract_from_string(runtime, &obj));
             if runtime.properties.contains_key(&string) {
                 runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} valid", string);
                 push_on_stack(&mut runtime.current_frame.operand_stack, runtime.properties.get(&string).unwrap().clone());
@@ -1212,7 +1212,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("java/lang/Thread", "setPriority0", "(I)V") => {
             let obj = args[0].clone().to_ref();
             runnerPrint!(runtime, true, 2, "BUILTIN: setPriority0 {} {}", args[0], args[1]);
-            try!(put_field(obj.clone(), &"java/lang/Thread", &"priority", args[1].clone()));
+            try!(put_field(runtime, obj.clone(), &"java/lang/Thread", &"priority", args[1].clone()));
         }
         ("java/lang/Thread", "currentThread", "()Ljava/lang/Thread;") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: currentThread");
@@ -1373,7 +1373,8 @@ fn branch_if<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, c
 fn make_string(runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerError> {
     let var = try!(construct_object(runtime, &"java/lang/String"));
     let obj = var.to_ref();
-    try!(put_field(obj, &"java/lang/String", &"value", construct_char_array(runtime,val)));
+    let array = construct_char_array(runtime,val);
+    try!(put_field(runtime, obj, &"java/lang/String", &"value", array));
     return Ok(var);
 }
 
@@ -1383,10 +1384,10 @@ fn make_field(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, _
     let name_var_interned = try!(string_intern(runtime, &name_var));
     let signature_var = try!(make_string(runtime, descriptor.as_str()));
     let var = try!(construct_object(runtime, class_name));
-    try!(put_field(var.to_ref(), class_name, "name", name_var_interned));
-    try!(put_field(var.to_ref(), class_name, "signature", signature_var));
+    try!(put_field(runtime, var.to_ref(), class_name, "name", name_var_interned));
+    try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
     let type_obj = try!(make_class(runtime, descriptor.as_str()));
-    try!(put_field(var.to_ref(), class_name, "type", type_obj));
+    try!(put_field(runtime, var.to_ref(), class_name, "type", type_obj));
     return Ok(var);
 }
 
@@ -1396,8 +1397,8 @@ fn make_method(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, 
     let name_var_interned = try!(string_intern(runtime, &name_var));
     let signature_var = try!(make_string(runtime, descriptor.as_str()));
     let var = try!(construct_object(runtime, class_name));
-    try!(put_field(var.to_ref(), class_name, "name", name_var_interned));
-    try!(put_field(var.to_ref(), class_name, "signature", signature_var));
+    try!(put_field(runtime, var.to_ref(), class_name, "name", name_var_interned));
+    try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
     return Ok(var);
 }
 
@@ -1417,7 +1418,8 @@ fn get_primitive_class(runtime: &mut Runtime, descriptor: String) -> Result<Vari
     runtime.class_objects.insert(descriptor.clone(), var.clone());
 
     let name_object = try!(make_string(runtime, try!(descriptor_to_type_name(descriptor.as_str())).as_str()));
-    try!(put_field(var.to_ref(), &"java/lang/Class", "name", try!(string_intern(runtime, &name_object))));
+    let interned_string = try!(string_intern(runtime, &name_object));
+    try!(put_field(runtime, var.to_ref(), &"java/lang/Class", "name", interned_string));
     try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
     let members = &var.to_ref().members;
     members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(true));
@@ -1439,7 +1441,8 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
     runtime.class_objects.insert(String::from(descriptor), var.clone());
 
     let name_object = try!(make_string(runtime, try!(descriptor_to_type_name(descriptor)).as_str()));
-    try!(put_field(var.to_ref(), &"java/lang/Class", "name", try!(string_intern(runtime, &name_object))));
+    let interned_string = try!(string_intern(runtime, &name_object));
+    try!(put_field(runtime, var.to_ref(), &"java/lang/Class", "name", interned_string));
     try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
     let members = &var.to_ref().members;
 
@@ -1459,7 +1462,7 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
                     field_objects.push(field_object);
                 }
                 let declared_fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", field_objects));
-                try!(put_field(reflection_data_object.to_ref(), &"java/lang/Class$ReflectionData", "declaredFields", declared_fields_array));
+                try!(put_field(runtime, reflection_data_object.to_ref(), &"java/lang/Class$ReflectionData", "declaredFields", declared_fields_array));
             }
             {
                 let mut method_objects : Vec<Variable> = Vec::new();
@@ -1470,13 +1473,13 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
                     method_objects.push(methods_object);
                 }
                 let declared_methods_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Method", method_objects));
-                try!(put_field(reflection_data_object.to_ref(), &"java/lang/Class$ReflectionData", "declaredMethods", declared_methods_array));
+                try!(put_field(runtime, reflection_data_object.to_ref(), &"java/lang/Class$ReflectionData", "declaredMethods", declared_methods_array));
             }
 
             let soft_reference_object = try!(construct_object(runtime, &"java/lang/ref/SoftReference"));
-            try!(put_field(soft_reference_object.to_ref(), &"java/lang/ref/SoftReference", "referent", reflection_data_object));
+            try!(put_field(runtime, soft_reference_object.to_ref(), &"java/lang/ref/SoftReference", "referent", reflection_data_object));
 
-            try!(put_field(var.to_ref(), &"java/lang/Class", "reflectionData", soft_reference_object));
+            try!(put_field(runtime, var.to_ref(), &"java/lang/Class", "reflectionData", soft_reference_object));
             members.borrow_mut().insert(String::from("__class"), try!(construct_null_object(runtime, class)));
         },
         Variable::ArrayReference(ref array_obj) => {
@@ -1501,13 +1504,14 @@ fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, value: 
     let class_result = try!(load_class(runtime, class_name));
     let mut statics = class_result.statics.borrow_mut();
     if !statics.contains_key(field_name) {
-        return Err(RunnerError::ClassNotLoaded(String::from(class_name)));
+        return Err(RunnerError::ClassInvalid2(format!("Couldn't find static '{}' in class '{}' to put", field_name, class_name)));;
     }
     statics.insert(String::from(field_name), value);
     return Ok(());
 }
 
-fn put_field(obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    runnerPrint!(runtime, true, 2, "Put Field {} {} {}", class_name, field_name, value);
     let super_obj = try!(get_super_obj(obj, class_name));
     let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
     let mut members = super_obj_with_field.members.borrow_mut();
@@ -1515,7 +1519,8 @@ fn put_field(obj: Rc<Object>, class_name: &str, field_name: &str, value: Variabl
     return Ok(());
 }
 
-fn get_field(obj: &Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
+fn get_field(runtime: &mut Runtime, obj: &Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
+    runnerPrint!(runtime, true, 2, "Get Field {} {}", class_name, field_name);
     let super_obj = try!(get_super_obj(obj.clone(), class_name));
     let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
     let members = super_obj_with_field.members.borrow();
@@ -1968,7 +1973,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let obj = var.to_ref();
-                let f = try!(get_field(&obj, class_name.as_str(), field_name.as_str()));
+                let f = try!(get_field(runtime, &obj, class_name.as_str(), field_name.as_str()));
                 runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}' result:'{}'", class_name, field_name, typ, obj, f);
                 push_on_stack(&mut runtime.current_frame.operand_stack, f);
             }
@@ -1979,7 +1984,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                 let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
                 let obj = var.to_ref();
                 runnerPrint!(runtime, true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj, value);
-                try!(put_field(obj, class_name.as_str(), field_name.as_str(), value));
+                try!(put_field(runtime, obj, class_name.as_str(), field_name.as_str(), value));
             }
             182 => {
                 let index = try!(buf.read_u16::<BigEndian>());
@@ -2303,6 +2308,8 @@ fn initialise_class_stage_2(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
     *class.initialising.borrow_mut() = true;
     try!(invoke_manual(runtime, class.clone(), Vec::new(), "<clinit>", "()V", true));
     *class.initialised.borrow_mut() = true;
+
+    runnerPrint!(runtime, true, 2, "Class '{}' stage 2 init complete", class.name);
 
     return Ok(());
 }
