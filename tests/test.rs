@@ -172,7 +172,7 @@ mod tests {
     #[test]
     fn multideps() {
         let mut runtime = get_runtime(&vec!(String::from("./tests/")));
-        assert_eq!(void_int_call(&mut runtime, "tests/multideps.class", "test"), 4);
+        assert_eq!(void_int_call(&mut runtime, "tests/multideps.class", "test"), 6);
     }
 
     #[test]

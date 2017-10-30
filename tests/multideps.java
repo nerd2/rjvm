@@ -1,16 +1,23 @@
 public class multideps {
     public static class A {
         public static B b;
+        public static C c;
         public static int y;
 
         static {
-            y = B.x;
+            c = new C();
+            y = B.x + c.b;
         }
     }
 
     public static class B {
         public static int x = 4;
         public int z = 5;
+    }
+
+    public static class C {
+        public static int a = 1;
+        public int b = 2;
     }
 
     public static class Root {

@@ -254,6 +254,9 @@ impl Variable {
             &Variable::ArrayReference(ref array) => {
                 return array.is_null;
             },
+            &Variable::UnresolvedReference(ref _x) => {
+                return true;
+            },
             _ => {
                 panic!("Couldn't check if primitive '{}' is null", self);
             }
@@ -306,6 +309,13 @@ impl Variable {
         return match self {
             &Variable::UnresolvedReference(ref _x) => true,
             _ => false,
+        }
+    }
+
+    pub fn get_unresolved_type_name(&self) -> String {
+        return match self {
+            &Variable::UnresolvedReference(ref type_name) => type_name.clone(),
+            _ => panic!("Cannot get unresolved type name of {}", self),
         }
     }
 
@@ -407,7 +417,6 @@ pub struct Runtime {
     string_interns: HashMap<String, Variable>,
     properties: HashMap<String, Variable>,
     class_objects: HashMap<String, Variable>,
-    unresolved_classes: Vec<String>,
     object_count: i32,
 }
 impl Runtime {
@@ -430,7 +439,6 @@ impl Runtime {
             string_interns: HashMap::new(),
             properties: HashMap::new(),
             class_objects: HashMap::new(),
-            unresolved_classes: Vec::new(),
             object_count: rand::random::<i32>(),
         };
     }
@@ -730,7 +738,7 @@ fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, Runne
     runnerPrint!(runtime, debug, 3, "Constructing object {}", name);
     try!(load_class(runtime, name));
 
-    let original_class = try!(runtime.classes.get(name).ok_or(RunnerError::ClassInvalid2(format!("Failed to find class {}", name)))).clone();
+    let original_class = try!(load_class(runtime, name));
     let mut original_obj : Option<Rc<Object>> = None;
     let mut class = original_class.clone();
     let mut sub_class : Option<Weak<Object>> = None;
@@ -1419,9 +1427,10 @@ fn get_primitive_class(runtime: &mut Runtime, descriptor: String) -> Result<Vari
 
     let name_object = try!(make_string(runtime, try!(descriptor_to_type_name(descriptor.as_str())).as_str()));
     let interned_string = try!(string_intern(runtime, &name_object));
-    try!(put_field(runtime, var.to_ref(), &"java/lang/Class", "name", interned_string));
-    try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
+    let statics = &var.to_ref().type_ref.statics;
+    statics.borrow_mut().insert(String::from("initted"), Variable::Boolean(true));
     let members = &var.to_ref().members;
+    members.borrow_mut().insert(String::from("name"), interned_string);
     members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(true));
     members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(false));
 
@@ -1443,7 +1452,8 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
     let name_object = try!(make_string(runtime, try!(descriptor_to_type_name(descriptor)).as_str()));
     let interned_string = try!(string_intern(runtime, &name_object));
     try!(put_field(runtime, var.to_ref(), &"java/lang/Class", "name", interned_string));
-    try!(put_static(runtime, &"java/lang/Class", &"initted", Variable::Boolean(true)));
+    let statics = &var.to_ref().type_ref.statics;
+    statics.borrow_mut().insert(String::from("initted"), Variable::Boolean(true));
     let members = &var.to_ref().members;
 
     let subtype = try!(parse_single_type_string(runtime, descriptor, true));
@@ -1523,8 +1533,20 @@ fn get_field(runtime: &mut Runtime, obj: &Rc<Object>, class_name: &str, field_na
     runnerPrint!(runtime, true, 2, "Get Field {} {}", class_name, field_name);
     let super_obj = try!(get_super_obj(obj.clone(), class_name));
     let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
-    let members = super_obj_with_field.members.borrow();
-    return Ok(members.get(&*field_name).unwrap().clone());
+    let mut members = super_obj_with_field.members.borrow_mut();
+
+    let unresolved_type_name;
+    {
+        let member = members.get(&*field_name).unwrap();
+        if !member.is_unresolved() {
+            return Ok(member.clone());
+        }
+        unresolved_type_name = member.get_unresolved_type_name().clone();
+    }
+
+    let var = try!(construct_null_object_by_name(runtime, unresolved_type_name.as_str()));
+    members.insert(String::from(field_name), var.clone());
+    return Ok(var);
 }
 
 fn icmp<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, cmp: F) -> Result<(), RunnerError>
@@ -1950,6 +1972,7 @@ fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Res
                         let statics = class_result.statics.borrow();
                         let maybe_static_variable = statics.get(&*field_name);
                         if maybe_static_variable.is_some() {
+                            runnerPrint!(runtime, true, 2, "GETSTATIC found {}", maybe_static_variable.unwrap());
                             push_on_stack(&mut runtime.current_frame.operand_stack, maybe_static_variable.unwrap().clone());
                             break;
                         }
@@ -2203,113 +2226,82 @@ fn load_class(runtime: &mut Runtime, name: &str) -> Result<Rc<Class>, RunnerErro
 
 fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError>  {
     let debug = false;
-    let mut classes_to_process : Vec<Rc<Class>> = Vec::new();
 
     let new_class = Rc::new(Class::new(&String::from(name), class_result));
     runtime.classes.insert(String::from(name), new_class.clone());
-    classes_to_process.push(new_class);
     runnerPrint!(runtime, debug, 1, "Bootstrapping {}", name);
-    try!(find_unresolved_class_dependencies(runtime, class_result));
-
-    while runtime.unresolved_classes.len() > 0 {
-        let class_to_resolve = runtime.unresolved_classes.pop().unwrap().clone();
-        if !runtime.classes.contains_key(&class_to_resolve) {
-            runnerPrint!(runtime, debug, 2, "Finding unresolved dependencies in class {}", class_to_resolve);
-            let class_result_to_resolve = try!(find_class(runtime,&class_to_resolve));
-            let new_class = Rc::new(Class::new(&class_to_resolve, &class_result_to_resolve));
-            runtime.classes.insert(class_to_resolve, new_class.clone());
-            classes_to_process.push(new_class);
-            try!(find_unresolved_class_dependencies(runtime, &class_result_to_resolve));
-        }
-    }
-
-    for class in &classes_to_process {
-        try!(initialise_class_stage_1(runtime, class));
-    }
-
-    let my_class = runtime.classes.get(&String::from(name)).unwrap().clone();
-    try!(initialise_class_stage_2(runtime, &my_class));
+    try!(initialise_class_stage_1(runtime, new_class.clone()));
+    try!(initialise_class_stage_2(runtime, &new_class));
     runnerPrint!(runtime, debug, 1, "Bootstrap totally complete on {}", name);
-    return Ok(my_class);
+    return Ok(new_class);
 }
 
-fn find_unresolved_class_dependencies(runtime: &mut Runtime, class_result: &ClassResult) -> Result<(), RunnerError> {
-    let debug = true;
-    for field in &class_result.fields {
-        let name_string = try!(get_cp_str(&class_result.constant_pool, field.name_index));
-        let descriptor_string = try!(get_cp_str(&class_result.constant_pool, field.descriptor_index));
-
-        runnerPrint!(runtime, debug, 3, "Checking field {} {}", name_string, descriptor_string);
-
-        try!(extract_type_info_from_descriptor(runtime, descriptor_string.as_str(), false));
-    }
-
-    for method in &class_result.methods {
-        let name_string = try!(get_cp_str(&class_result.constant_pool, method.name_index));
-        let descriptor_string = try!(get_cp_str(&class_result.constant_pool, method.descriptor_index));
-
-        runnerPrint!(runtime, debug, 3, "Checking method {} {}", name_string, descriptor_string);
-
-        try!(parse_function_type_string(runtime, descriptor_string.as_str()));
-    }
-
-    if class_result.super_class_index > 0 {
-        let class_name = try!(get_cp_class(&class_result.constant_pool, class_result.super_class_index));
-        if !runtime.classes.contains_key(&*class_name) {
-            runtime.unresolved_classes.push((*class_name).clone());
-        }
-    }
-    if !runtime.classes.contains_key(&String::from("java/lang/Object")) {
-        runtime.unresolved_classes.push(String::from("java/lang/Object"));
-    }
-    return Ok(());
-}
-
-fn initialise_class_stage_1(runtime: &mut Runtime, class: &Rc<Class>) -> Result<(), RunnerError> {
+fn initialise_class_stage_1(runtime: &mut Runtime, mut class: Rc<Class>) -> Result<(), RunnerError> {
     let debug = false;
-    if *class.initialising.borrow() || *class.initialised.borrow() {
-        return Ok(());
-    }
+
     runnerPrint!(runtime, debug, 2, "Initialising class stage 1 {}", class.name);
 
-    for field in &class.cr.fields {
-        if field.access_flags & ACC_STATIC == 0 {
-            continue;
+    // Loop down superclass chain
+    while !*class.initialising.borrow() && !*class.initialised.borrow() {
+        // Initialise variables, refs can be unresolved
+        for field in &class.cr.fields {
+            if field.access_flags & ACC_STATIC == 0 {
+                continue;
+            }
+
+            let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
+            let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+
+            runnerPrint!(runtime, debug, 3, "Constructing class static member {} {}", name_string, descriptor_string);
+
+            let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
+
+            runnerPrint!(runtime, debug, 3, "Constructed with {}", var);
+
+            class.statics.borrow_mut().insert((*name_string).clone(), var);
         }
 
-        let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-        let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+        let super_class_name =
+            if class.cr.super_class_index > 0 {
+                (*try!(get_cp_class(&class.cr.constant_pool, class.cr.super_class_index))).clone()
+            } else if class.name != "java/lang/Object" {
+                String::from("java/lang/Object")
+            } else {
+                return Ok(());
+            };
 
-        runnerPrint!(runtime, debug, 3, "Constructing class static member {} {}", name_string, descriptor_string);
-
-        let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
-
-        class.statics.borrow_mut().insert((*name_string).clone(), var);
-    }
-    if class.cr.super_class_index > 0 {
-        let super_class_name = try!(get_cp_class(&class.cr.constant_pool, class.cr.super_class_index));
         runnerPrint!(runtime, debug, 3, "Class {} has superclass {}", class.name, super_class_name);
-        *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&*super_class_name).ok_or(RunnerError::ClassInvalid2(format!("Couldn't get superclass {}", super_class_name)))).clone());
-    } else {
-        if class.name != "java/lang/Object" {
-            runnerPrint!(runtime, debug, 3, "Class {} has superclass {}", class.name, "java/lang/Object");
-            *class.super_class.borrow_mut() = Some(try!(runtime.classes.get(&String::from("Java/lang/Object")).ok_or(RunnerError::ClassInvalid("Couldn't get object superclass"))).clone());
+        {
+            let maybe_superclass = runtime.classes.get(&super_class_name);
+            if maybe_superclass.is_some() {
+                *class.super_class.borrow_mut() = Some(maybe_superclass.unwrap().clone());
+                return Ok(());
+            }
         }
+
+        runnerPrint!(runtime, debug, 2, "Finding super class {} not already loaded", super_class_name);
+        let class_result = try!(find_class(runtime, super_class_name.as_str()));
+        let new_class = Rc::new(Class::new(&super_class_name, &class_result));
+        runtime.classes.insert(super_class_name, new_class.clone());
+        *class.super_class.borrow_mut() = Some(new_class.clone());
+
+        class = new_class;
     }
+
     return Ok(());
 }
 
 fn initialise_class_stage_2(runtime: &mut Runtime, class: &Rc<Class>) -> Result<(), RunnerError> {
+    let debug = false;
+
     if *class.initialising.borrow() || *class.initialised.borrow() {
         return Ok(());
     }
-    runnerPrint!(runtime, true, 2, "Initialising class stage 2 {}", class.name);
-
+    runnerPrint!(runtime, debug, 2, "Initialising class stage 2 {}", class.name);
     *class.initialising.borrow_mut() = true;
     try!(invoke_manual(runtime, class.clone(), Vec::new(), "<clinit>", "()V", true));
     *class.initialised.borrow_mut() = true;
-
-    runnerPrint!(runtime, true, 2, "Class '{}' stage 2 init complete", class.name);
+    runnerPrint!(runtime, debug, 2, "Class '{}' stage 2 init complete", class.name);
 
     return Ok(());
 }
@@ -2378,7 +2370,6 @@ fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolv
                     let class = runtime.classes.get(type_string.as_str()).unwrap().clone();
                     variable = try!(construct_null_object(runtime, class));
                 } else {
-                    runtime.unresolved_classes.push(type_string.clone());
                     variable = Variable::UnresolvedReference(type_string.clone());
                 }
             }
@@ -2430,7 +2421,7 @@ fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Ve
             type_string.push_str(iter.by_ref().take_while(|x| *x != ';').collect::<String>().as_str());
         }
         runnerPrint!(runtime, debug, 3, "Found parameter {}", type_string);
-        let param = try!(parse_single_type_string(runtime, type_string.as_str(), false));
+        let param = try!(parse_single_type_string(runtime, type_string.as_str(), true));
         if !param.is_type_1() {
             parameters.push(param.clone());
         }
@@ -2443,7 +2434,7 @@ fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Ve
     if return_type_string == "V" {
         return Ok((parameters, None));
     } else {
-        return Ok((parameters, Some(try!(parse_single_type_string(runtime, return_type_string.as_str(), false)))));
+        return Ok((parameters, Some(try!(parse_single_type_string(runtime, return_type_string.as_str(), true)))));
     }
 }
 
