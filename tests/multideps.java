@@ -9,7 +9,8 @@ public class multideps {
     }
 
     public static class B {
-        public static int x = 5;
+        public static int x = 4;
+        public int z = 5;
     }
 
     public static class Root {
@@ -18,6 +19,10 @@ public class multideps {
     }
 
     public static int test() {
-        return A.y;
+        if (A.b != null) {
+            return A.b.z;
+        } else {
+            return A.y;
+        }
     }
 }
