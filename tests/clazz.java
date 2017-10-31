@@ -1,5 +1,6 @@
 import java.lang.reflect.Field;
 import java.lang.IllegalAccessException;
+import sun.misc.Unsafe;
 
 public class clazz {
     private int x = 0;
@@ -11,5 +12,9 @@ public class clazz {
 
     private static String getNameOfFirstField() {
         return clazz.class.getDeclaredFields()[0].getName();
+    }
+
+    private static boolean checkSlots() {
+        return Unsafe.getUnsafe().objectFieldOffset(clazz.class.getDeclaredFields()[0]) != Unsafe.getUnsafe().objectFieldOffset(clazz.class.getDeclaredFields()[1]);
     }
 }

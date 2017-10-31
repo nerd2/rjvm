@@ -128,14 +128,23 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn class_get_declared() {
         let mut runtime = get_runtime(&vec!(String::from("./tests/")));
+        assert_eq!(void_bool_call(&mut runtime, "tests/clazz.class", "checkSlots"), true);
         assert_eq!(void_int_call(&mut runtime, "tests/clazz.class", "getNumberOfFields"), 0x2);
+        assert_eq!(void_str_call(&mut runtime, "tests/clazz.class", "getNameOfFirstField"), "x");
+    }
+
+    fn void_bool_call(runtime: &mut Runtime, path: &str, method: &str) -> bool {
+        return run_method(runtime, Path::new(path), method, &Vec::new(), "Z").to_bool();
     }
 
     fn void_int_call(runtime: &mut Runtime, path: &str, method: &str) -> i32 {
         return run_method(runtime, Path::new(path), method, &Vec::new(), "I").to_int();
+    }
+
+    fn void_str_call(runtime: &mut Runtime, path: &str, method: &str) -> String {
+        return run_method(runtime, Path::new(path), method, &Vec::new(), "Ljava/lang/String;").extract_string();
     }
 
     fn int_int_call(runtime: &mut Runtime, path: &str, method: &str, arg: i32) -> i32 {

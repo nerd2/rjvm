@@ -871,7 +871,7 @@ fn aload<F, G>(desc: &str, runtime: &mut Runtime, _t: F, converter: G) -> Result
     }
 
     let array = array_obj.elements.borrow();
-    if array.len() < index as usize {
+    if array.len() <= index as usize {
         let exception = try!(construct_object(runtime, &"java/lang/ArrayIndexOutOfBoundsException"));
         return Err(RunnerError::Exception(exception));
     }
@@ -907,7 +907,7 @@ fn astore<F>(desc: &str, runtime: &mut Runtime, converter: F) -> Result<(), Runn
     }
 
     let mut array = array_obj.elements.borrow_mut();
-    if array.len() < index as usize {
+    if array.len() <= index as usize {
         let exception = try!(construct_object(runtime, &"java/lang/ArrayIndexOutOfBoundsException"));
         return Err(RunnerError::Exception(exception));
     }
@@ -1094,16 +1094,19 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let class = class_obj.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
             let public_only = args[1].to_bool();
 
+            runnerPrint!(runtime, true, 2, "BUILTIN: getDeclaredFields0 {}", class.name);
+
             let mut field_objects : Vec<Variable> = Vec::new();
+            let mut index = 0;
             for field in &class.cr.fields {
-                if public_only && (field.access_flags & ACC_PUBLIC == 0) {
-                    continue;
+                if !public_only || (field.access_flags & ACC_PUBLIC != 0) {
+                    let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
+                    let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+                    let field_object = try!(make_field(runtime, &args[0], name_string, descriptor_string, field.access_flags, index));
+                    field_objects.push(field_object);
                 }
 
-                let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-                let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
-                let field_object = try!(make_field(runtime, name_string, descriptor_string, field.access_flags));
-                field_objects.push(field_object);
+                index += 1;
             }
             let fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", Some(field_objects)));
             push_on_stack(&mut runtime.current_frame.operand_stack, fields_array);
@@ -1171,27 +1174,6 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(1));
         },
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
-        ("sun/misc/Unsafe", "registerNatives", "()V") => {return Ok(true)},
-        ("sun/misc/Unsafe", "arrayBaseOffset", "(Ljava/lang/Class;)I") => {
-            runnerPrint!(runtime, true, 2, "BUILTIN: arrayBaseOffset");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(0));
-        },
-        ("sun/misc/Unsafe", "objectFieldOffset", "(Ljava/lang/reflect/Field;)J") => {
-            runnerPrint!(runtime, true, 2, "BUILTIN: objectFieldOffset");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(0)); // TODO: this is rubbish
-        },
-        ("sun/misc/Unsafe", "arrayIndexScale", "(Ljava/lang/Class;)I") => {
-            runnerPrint!(runtime, true, 2, "BUILTIN: arrayIndexScale");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(1));
-        },
-        ("sun/misc/Unsafe", "addressSize", "()I") => {
-            runnerPrint!(runtime, true, 2, "BUILTIN: addressSize");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(4));
-        },
-        ("sun/misc/Unsafe", "pageSize", "()I") => {
-            runnerPrint!(runtime, true, 2, "BUILTIN: pageSize");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(4096));
-        },
         ("java/lang/String", "intern", "()Ljava/lang/String;") => {
             let interned = try!(string_intern(runtime, &args[0]));
             runnerPrint!(runtime, true, 2, "BUILTIN: intern {} {:p}", args[0], &*interned.to_ref());
@@ -1290,6 +1272,52 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
                 }
             }
             push_on_stack(&mut runtime.current_frame.operand_stack, runtime.current_thread.as_ref().unwrap().clone());
+        },
+        ("sun/misc/Unsafe", "registerNatives", "()V") => {return Ok(true)},
+        ("sun/misc/Unsafe", "arrayBaseOffset", "(Ljava/lang/Class;)I") => {
+            runnerPrint!(runtime, true, 2, "BUILTIN: arrayBaseOffset");
+            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(0));
+        },
+        ("sun/misc/Unsafe", "objectFieldOffset", "(Ljava/lang/reflect/Field;)J") => {
+            let obj = args[1].clone().to_ref();
+            let slot = try!(get_field(runtime, &obj, &"java/lang/reflect/Field", "slot")).to_int();
+
+            runnerPrint!(runtime, true, 2, "BUILTIN: objectFieldOffset {} {}", obj, slot);
+            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(slot as i64));
+        },
+        ("sun/misc/Unsafe", "arrayIndexScale", "(Ljava/lang/Class;)I") => {
+            runnerPrint!(runtime, true, 2, "BUILTIN: arrayIndexScale");
+            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(1));
+        },
+        ("sun/misc/Unsafe", "addressSize", "()I") => {
+            runnerPrint!(runtime, true, 2, "BUILTIN: addressSize");
+            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(4));
+        },
+        ("sun/misc/Unsafe", "pageSize", "()I") => {
+            runnerPrint!(runtime, true, 2, "BUILTIN: pageSize");
+            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(4096));
+        },
+        ("sun/misc/Unsafe", "compareAndSwapObject", "(Ljava/lang/Object;JLjava/lang/Object;Ljava/lang/Object;)Z") => {
+            let obj = args[1].clone().to_ref();
+            let offset = args[2].to_long(); // 2 slots :(
+            let expected = args[4].clone().to_ref();
+            let swap = args[5].clone();
+            let class = args[1].clone().to_ref_type();
+
+            let field = &class.cr.fields[offset as usize];
+            let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
+            let mut members = obj.members.borrow_mut();
+            let current = members.get(&*name_string).unwrap().to_ref().clone();
+            runnerPrint!(runtime, true, 2, "BUILTIN: compareAndSwapObject {} {} {} {} {}", obj, offset, current, expected, swap);
+            let ret;
+            if (current.is_null && expected.is_null) || rc_ptr_eq(&current, &expected) {
+                runnerPrint!(runtime, true, 3, "BUILTIN: compareAndSwapObject swapped");
+                members.insert((*name_string).clone(), swap);
+                ret = true;
+            } else {
+                ret = false;
+            }
+            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(ret));
         }
         ("sun/misc/VM", "initialize", "()V") => {}
         ("sun/reflect/Reflection", "getCallerClass", "()Ljava/lang/Class;") => {
@@ -1348,7 +1376,7 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
             // Find method
             while { code = get_class_method_code(&obj.type_ref.cr, method_name.as_str(), descriptor.as_str()).ok(); code.is_none() } {
                 if obj.super_class.borrow().is_none() {
-                    return Err(RunnerError::ClassInvalid2(format!("Could not find super class of object that matched method {} {}", method_name, descriptor)))
+                    return Err(RunnerError::ClassInvalid2(format!("Could not find super class of object '{}' that matched method '{}' '{}'", obj, method_name, descriptor)))
                 }
                 let new_obj = obj.super_class.borrow().clone().unwrap();
                 obj = new_obj;
@@ -1429,7 +1457,7 @@ fn make_string(runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerError
     return Ok(var);
 }
 
-fn make_field(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, _access: u16)  -> Result<Variable, RunnerError> {
+fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descriptor: Rc<String>, _access: u16, slot: i32)  -> Result<Variable, RunnerError> {
     let class_name = "java/lang/reflect/Field";
     let name_var = try!(make_string(runtime, name.as_str()));
     let name_var_interned = try!(string_intern(runtime, &name_var));
@@ -1439,6 +1467,8 @@ fn make_field(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, _
     try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
     let type_obj = try!(make_class(runtime, descriptor.as_str()));
     try!(put_field(runtime, var.to_ref(), class_name, "type", type_obj));
+    try!(put_field(runtime, var.to_ref(), class_name, "slot", Variable::Int(slot)));
+    try!(put_field(runtime, var.to_ref(), class_name, "clazz", clazz.clone()));
     return Ok(var);
 }
 
@@ -1481,7 +1511,6 @@ fn get_primitive_class(runtime: &mut Runtime, descriptor: String) -> Result<Vari
 }
 
 fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, RunnerError> {
-    try!(load_class(runtime, &"java/lang/Class"));
     {
         let maybe_existing = runtime.class_objects.get(&String::from(descriptor));
         if maybe_existing.is_some() {
@@ -1499,10 +1528,14 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
     statics.borrow_mut().insert(String::from("initted"), Variable::Boolean(true));
     let members = &var.to_ref().members;
 
-    let subtype = try!(parse_single_type_string(runtime, descriptor, true));
+    let subtype = try!(parse_single_type_string(runtime, descriptor, false));
     let mut is_primitive = false;
     let mut is_array = false;
+    let mut is_unresolved = false;
     match subtype {
+        Variable::UnresolvedReference(ref _type_string) => {
+            is_unresolved = true;
+        },
         Variable::Reference(ref obj) => {
             let class = obj.type_ref.clone();
             members.borrow_mut().insert(String::from("__class"), try!(construct_null_object(runtime, class)));
@@ -1521,6 +1554,7 @@ fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, Runne
     }
     members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(is_primitive));
     members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(is_array));
+    members.borrow_mut().insert(String::from("__is_unresolved"), Variable::Boolean(is_unresolved));
 
     return Ok(var);
 }
