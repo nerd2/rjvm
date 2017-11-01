@@ -73,6 +73,12 @@ pub struct Code {
     pub attributes: Vec<AttributeItem>
 }
 
+impl Code {
+    pub fn new() -> Code {
+        Code { max_locals: 0, max_stack: 0, code: Vec::new(), exceptions: Vec::new(), attributes: Vec::new() }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum AttributeItem {
     ConstantValue{index: u16},

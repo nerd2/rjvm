@@ -41,7 +41,9 @@ pub enum RunnerError {
     NativeMethod(String),
     UnknownOpCode(u8),
     ClassNotLoaded(String),
-    Exception(Variable)
+    Exception(Variable),
+    Return,
+    Invoke
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -406,6 +408,21 @@ struct Frame {
     constant_pool: HashMap<u16, ConstantPoolItem>,
     local_variables: Vec<Variable>,
     operand_stack: Vec<Variable>,
+    return_pos: u64,
+    code: Code,
+    name: String
+}
+impl Frame {
+    pub fn new() -> Frame {
+        Frame {
+            class: None,
+            constant_pool: HashMap::new(),
+            operand_stack: Vec::new(),
+            local_variables: Vec::new(),
+            return_pos: 0,
+            code: Code::new(),
+            name: String::new()}
+    }
 }
 
 pub struct Runtime {
@@ -424,16 +441,8 @@ impl Runtime {
     fn  new(class_paths: Vec<String>) -> Runtime {
         return Runtime {
             class_paths: class_paths,
-            previous_frames: vec!(Frame {
-                class: None,
-                constant_pool: HashMap::new(),
-                operand_stack: Vec::new(),
-                local_variables: Vec::new()}),
-            current_frame: Frame {
-                class: None,
-                constant_pool: HashMap::new(),
-                operand_stack: Vec::new(),
-                local_variables: Vec::new()},
+            previous_frames: vec!(Frame::new()),
+            current_frame: Frame::new(),
             classes: HashMap::new(),
             count: 0,
             current_thread: None,
@@ -445,16 +454,8 @@ impl Runtime {
     }
 
     pub fn reset_frames(&mut self) {
-        self.previous_frames = vec!(Frame {
-            class: None,
-            constant_pool: HashMap::new(),
-            operand_stack: Vec::new(),
-            local_variables: Vec::new()});
-        self.current_frame = Frame {
-            class: None,
-            constant_pool: HashMap::new(),
-            operand_stack: Vec::new(),
-            local_variables: Vec::new()};
+        self.previous_frames = vec!(Frame::new());
+        self.current_frame = Frame::new();
     }
 
     pub fn get_next_object_code(&mut self) -> i32 {
@@ -962,7 +963,7 @@ fn vreturn<F, K>(desc: &str, runtime: &mut Runtime, extractor: F) -> Result<bool
     extractor(&popped); // Type check
     runtime.current_frame = runtime.previous_frames.pop().unwrap();
     push_on_stack(&mut runtime.current_frame.operand_stack, popped);
-    return Ok(true);
+    return Err(RunnerError::Return);
 }
 
 // Get the (super)object which contains a field
@@ -993,26 +994,26 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
     return Ok(obj);
 }
 
-fn invoke_manual(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, method_name: &str, method_descriptor: &str, allow_not_found: bool) -> Result<(), RunnerError>{
-    let new_frame = Frame {
-        class: Some(class.clone()),
-        constant_pool: class.cr.constant_pool.clone(),
-        operand_stack: Vec::new(),
-        local_variables: args.clone()};
-
+fn invoke_nested(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, method_name: &str, method_descriptor: &str, allow_not_found: bool) -> Result<(), RunnerError>{
     let maybe_code = get_class_method_code(&class.cr, method_name, method_descriptor);
     if maybe_code.is_err() {
         if allow_not_found { return Ok(()) }
         else { return Err(maybe_code.err().unwrap()) };
     }
-    let code = maybe_code.unwrap();
+    let new_frame = Frame {
+        class: Some(class.clone()),
+        constant_pool: class.cr.constant_pool.clone(),
+        operand_stack: Vec::new(),
+        local_variables: args.clone(),
+        name: String::from(class.name.clone() + method_name),
+        code: maybe_code.unwrap(),
+        return_pos: 0,
+    };
 
     runnerPrint!(runtime, true, 1, "INVOKE manual {} {} on {}", method_name, method_descriptor, class.name);
     runtime.previous_frames.push(runtime.current_frame.clone());
     runtime.current_frame = new_frame;
-    try!(do_run_method((class.name.clone() + method_name).as_str(), runtime, &code, 0));
-
-    return Ok(());
+    return do_run_method(runtime);
 }
 
 fn string_intern(runtime: &mut Runtime, var: &Variable) -> Result<Variable, RunnerError> {
@@ -1208,7 +1209,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
         ("java/security/AccessController", "doPrivileged", "(Ljava/security/PrivilegedAction;)Ljava/lang/Object;") => {
             let action = args[0].clone().to_ref();
             runnerPrint!(runtime, true, 2, "BUILTIN: doPrivileged {}", action);
-            try!(invoke_manual(runtime, action.type_ref.clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
+            try!(invoke_nested(runtime, action.type_ref.clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
         },
         ("java/security/AccessController", "getStackAccessControlContext", "()Ljava/security/AccessControlContext;") => {
             let ret = try!(construct_null_object_by_name(runtime, &"java/security/AccessControlContext"));
@@ -1255,7 +1256,7 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
                 {
                     let var = try!(construct_object(runtime, &"java/lang/ThreadGroup"));
                     let obj = var.to_ref();
-                    try!(invoke_manual(runtime, obj.type_ref.clone(), vec!(var.clone()), "<init>", "()V", false));
+                    try!(invoke_nested(runtime, obj.type_ref.clone(), vec!(var.clone()), "<init>", "()V", false));
                     thread_group = var.clone();
                 }
 
@@ -1390,15 +1391,17 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
             class: Some(class.clone()),
             constant_pool: class.cr.constant_pool.clone(),
             operand_stack: Vec::new(),
-            local_variables: new_local_variables
+            local_variables: new_local_variables,
+            name: new_method_name.unwrap(),
+            code: code.unwrap(),
+            return_pos: 0,
         });
 
     }
 
     runtime.previous_frames.push(runtime.current_frame.clone());
     runtime.current_frame = new_frame.unwrap();
-    try!(do_run_method(new_method_name.unwrap().as_str(), runtime, &code.unwrap(), 0));
-    return Ok(());
+    return Err(RunnerError::Invoke);
 }
 
 fn fcmp(desc: &str, runtime: &mut Runtime, is_g: bool) -> Result<(), RunnerError> {
@@ -2014,7 +2017,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         177 => { // return
             runnerPrint!(runtime, true, 1, "RETURN");
             runtime.current_frame = runtime.previous_frames.pop().unwrap();
-            return Ok(true);
+            return Err(RunnerError::Return);
         }
         178 => { // getstatic
             let index = try!(buf.read_u16::<BigEndian>());
@@ -2198,48 +2201,61 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
     return Ok(false);
 }
 
-fn do_run_method(name: &str, runtime: &mut Runtime, code: &Code, pc: u16) -> Result<(), RunnerError> {
-    if pc as usize > code.code.len() {
-        return Err(RunnerError::InvalidPc);
-    }
-    let mut buf = Cursor::new(&code.code);
+fn do_run_method(runtime: &mut Runtime) -> Result<(), RunnerError> {
+    let start_frames = runtime.previous_frames.len();
 
     loop {
-        let current_position = buf.position();
-        let result = instruction(runtime, name, &mut buf);
-        if result.is_err() {
-            let mut caught = false;
-            let err = result.err().unwrap();
-            match &err {
-                &RunnerError::Exception(ref exception) => {
-                    runnerPrint!(runtime, true, 3, "Exception {}", exception);
-                    for e in &code.exceptions {
-                        if current_position >= e.start_pc as u64 && current_position <= e.end_pc as u64 {
-                            if e.catch_type > 0 {
-                                let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, e.catch_type));
-                                if exception.to_ref().type_ref.name != *class_name {
-                                    continue;
+        let code = runtime.current_frame.code.clone();
+        let mut buf = Cursor::new(&code.code);
+        let name_string = runtime.current_frame.name.clone();
+
+        buf.set_position(runtime.current_frame.return_pos);
+
+        loop {
+            let current_position = buf.position();
+            let result = instruction(runtime, name_string.as_str(), &mut buf);
+            if result.is_err() {
+                let mut caught = false;
+                let err = result.err().unwrap();
+                match &err {
+                    &RunnerError::Exception(ref exception) => {
+                        runnerPrint!(runtime, true, 3, "Exception {}", exception);
+                        for e in &runtime.current_frame.code.exceptions {
+                            if current_position >= e.start_pc as u64 && current_position <= e.end_pc as u64 {
+                                if e.catch_type > 0 {
+                                    let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, e.catch_type));
+                                    if exception.to_ref().type_ref.name != *class_name {
+                                        continue;
+                                    }
                                 }
+
+                                runnerPrint!(runtime, true, 3, "Caught exception and branching to {}", e.handler_pc);
+
+                                caught = true;
+                                push_on_stack(&mut runtime.current_frame.operand_stack, exception.clone());
+                                buf.set_position(e.handler_pc as u64);
+                                break;
                             }
-
-                            runnerPrint!(runtime, true, 3, "Caught exception and branching to {}", e.handler_pc);
-
-                            caught = true;
-                            push_on_stack(&mut runtime.current_frame.operand_stack, exception.clone());
-                            buf.set_position(e.handler_pc as u64);
-                            break;
                         }
+                    },
+                    &RunnerError::Invoke => {
+                        let len = runtime.previous_frames.len();
+                        runtime.previous_frames[len - 1].return_pos = buf.position();
+                        break;
+                    },
+                    &RunnerError::Return => {
+                        let len = runtime.previous_frames.len();
+                        if runtime.previous_frames.len() < start_frames {
+                            return Ok(());
+                        }
+                        break;
                     }
-                },
-                _ => {}
-            }
+                    _ => {}
+                }
 
-            if caught == false {
-                return Err(err);
-            }
-        } else {
-            if result.unwrap() {
-                return Ok(());
+                if caught == false {
+                    return Err(err);
+                }
             }
         }
     }
@@ -2401,7 +2417,7 @@ fn initialise_class_stage_2(runtime: &mut Runtime, class: &Rc<Class>) -> Result<
     }
     runnerPrint!(runtime, debug, 2, "Initialising class stage 2 {}", class.name);
     *class.initialising.borrow_mut() = true;
-    try!(invoke_manual(runtime, class.clone(), Vec::new(), "<clinit>", "()V", true));
+    try!(invoke_nested(runtime, class.clone(), Vec::new(), "<clinit>", "()V", true));
     *class.initialised.borrow_mut() = true;
     runnerPrint!(runtime, debug, 2, "Class '{}' stage 2 init complete", class.name);
 
@@ -2549,8 +2565,9 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
     try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
 
     let main_code = try!(get_class_method_code(class, &"main", &"([Ljava/lang/String;)V"));
+    runtime.current_frame.code = main_code;
 
-    try!(do_run_method("main", &mut runtime, &main_code, 0));
+    try!(do_run_method(&mut runtime));
 
     return Ok(());
 }
@@ -2590,7 +2607,8 @@ pub fn run_method(runtime: &mut Runtime, class_result: &ClassResult, method: &st
     let code = try!(get_class_method_code(class_result, method, method_descriptor.as_str()));
 
     println!("Running method");
-    try!(do_run_method(method, runtime, &code, 0));
+    runtime.current_frame.code = code;
+    try!(do_run_method(runtime));
 
     return Ok(pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().clone());
 }
