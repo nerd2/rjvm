@@ -7,12 +7,9 @@ pub mod reader {
     #[macro_use]
     pub mod runner;
     mod util;
-    mod builtins {
-        pub mod java_lang;
-        pub mod java_other;
-        pub mod sun;
-    }
+    mod builtins;
     mod types {
+        pub mod class;
         pub mod constant_pool;
         pub mod frame;
         pub mod objects;

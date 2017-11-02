@@ -11,6 +11,7 @@ extern crate byteorder;
 extern crate rand;
 use reader::builtins::*;
 use reader::class_reader::*;
+pub use reader::types::class::*;
 pub use reader::types::frame::*;
 pub use reader::types::objects::*;
 pub use reader::types::runtime::*;
@@ -59,21 +60,6 @@ impl From<ClassReadError> for RunnerError {
     fn from(err: ClassReadError) -> RunnerError {
         RunnerError::ClassInvalid2(format!("{:?}", err))
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Class {
-    pub name: String,
-    pub cr: ClassResult,
-    pub initialising: RefCell<bool>,
-    pub initialised: RefCell<bool>,
-    pub statics: RefCell<HashMap<String, Variable>>,
-    pub super_class: RefCell<Option<Rc<Class>>>
-}
-impl Class {
-  pub fn new(name: &String, cr: &ClassResult) -> Class {
-      return Class { name: name.clone(), initialising: RefCell::new(false), initialised: RefCell::new(false), cr: cr.clone(), statics: RefCell::new(HashMap::new()), super_class: RefCell::new(None)};
-  }
 }
 
 fn initialise_variable(runtime: &mut Runtime, descriptor_string: &str) -> Result<Variable, RunnerError> {
@@ -355,24 +341,6 @@ pub fn invoke_nested(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable
         return do_run_method(runtime);
     }
 }
-
-
-fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, runtime: &mut Runtime) -> Result<bool, RunnerError> {
-    runnerPrint!(runtime, true, 4, "try_builtin {} {} {}", class_name, method_name, descriptor);
-
-    if try!(java_lang::try_builtin(class_name, method_name, descriptor, args, runtime)) {
-        return Ok((true));
-    }
-    if try!(java_other::try_builtin(class_name, method_name, descriptor, args, runtime)) {
-        return Ok((true));
-    }
-    if try!(sun::try_builtin(class_name, method_name, descriptor, args, runtime)) {
-        return Ok((true));
-    }
-
-    return Ok(false);
-}
-
 
 fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special: bool) -> Result<(), RunnerError> {
     let debug = true;
