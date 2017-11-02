@@ -77,57 +77,6 @@ impl From<ClassReadError> for RunnerError {
     }
 }
 
-fn descriptor_to_type_name(string: &str) -> Result<String, RunnerError> {
-    let mut iter = string.chars();
-
-    let mut maybe_type_specifier = iter.next();
-
-    if maybe_type_specifier.is_none() {
-        return Err(RunnerError::ClassInvalid("Type specifier blank"));
-    }
-
-    let mut array_depth = 0;
-    while maybe_type_specifier.unwrap_or(' ') == '[' {
-        array_depth = array_depth + 1;
-        maybe_type_specifier = iter.next();
-    }
-
-    if maybe_type_specifier.is_none() {
-        return Err(RunnerError::ClassInvalid2(format!("Type specifier invalid {}", string)));
-    }
-
-    let mut ret : String =
-        match maybe_type_specifier.unwrap() {
-            'L' => iter.take_while(|x| *x != ';').collect(),
-            _ => {
-                String::from(match maybe_type_specifier.unwrap() {
-                    'B' => "byte",
-                    'C' => "char",
-                    'D' => "double",
-                    'F' => "float",
-                    'I' => "int",
-                    'J' => "long",
-                    'S' => "short",
-                    'Z' => "boolean",
-                    _ => return Err(RunnerError::ClassInvalid2(format!("Type specifier invalid {}", string)))
-                })
-            }
-        };
-
-    while array_depth > 0 {
-        ret.push_str("[]");
-        array_depth = array_depth - 1;
-    }
-
-    return Ok(ret);
-}
-
-fn pop_from_stack(operand_stack: &mut Vec<Variable>) -> Option<Variable> {
-    let maybe_var = operand_stack.pop();
-    maybe_var.as_ref().map(|x| {if !x.is_type_1() {operand_stack.pop();}});
-    return maybe_var;
-}
-
 fn get_cp_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(Rc<String>, Rc<String>), RunnerError> {
     debugPrint!(false, 5, "{}", index);
 
@@ -360,8 +309,8 @@ fn load<F>(desc: &str, index: u8, runtime: &mut Runtime, _t: F) -> Result<(), Ru
 fn aload<F, G>(desc: &str, runtime: &mut Runtime, _t: F, converter: G) -> Result<(), RunnerError>
     where G: Fn(Variable) -> Variable
 { // TODO: Type checking
-    let index = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int();
-    let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let index = runtime.pop_from_stack().unwrap().to_int();
+    let var = runtime.pop_from_stack().unwrap();
     let array_obj = var.to_arrayobj();
     runnerPrint!(runtime, true, 2, "{} {} {}", desc, index, var);
     if array_obj.is_null {
@@ -382,7 +331,7 @@ fn aload<F, G>(desc: &str, runtime: &mut Runtime, _t: F, converter: G) -> Result
 }
 
 fn store<F>(desc: &str, index: u8, runtime: &mut Runtime, _t: F) -> Result<(), RunnerError> { // TODO: Type checking
-    let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{}_{} {}", desc, index, popped);
     while runtime.current_frame.local_variables.len() <= index as usize {
         runtime.current_frame.local_variables.push(Variable::Int(0));
@@ -395,9 +344,9 @@ fn store<F>(desc: &str, index: u8, runtime: &mut Runtime, _t: F) -> Result<(), R
 fn astore<F>(desc: &str, runtime: &mut Runtime, converter: F) -> Result<(), RunnerError>
     where F: Fn(&Variable) -> Variable
 { // TODO: Type checking
-    let value = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    let index = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int();
-    let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let value = runtime.pop_from_stack().unwrap();
+    let index = runtime.pop_from_stack().unwrap().to_int();
+    let var = runtime.pop_from_stack().unwrap();
     let array_obj = var.to_arrayobj();
     runnerPrint!(runtime, true, 2, "{} {} {}", desc, index, var);
     if array_obj.is_null {
@@ -425,8 +374,8 @@ fn maths_instr<F, G, H, K>(desc: &str, runtime: &mut Runtime, creator: F, extrac
     G: Fn(&Variable) -> K,
     H: Fn(K, K) -> K
 {
-    let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped1 = runtime.pop_from_stack().unwrap();
+    let popped2 = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{} {} {}", desc, popped1, popped2);
     runtime.push_on_stack(creator(operation(extractor(&popped2), extractor(&popped1))));
 }
@@ -438,8 +387,8 @@ fn maths_instr_2<F, G, H, I, J, K, L>(desc: &str, runtime: &mut Runtime, creator
         H: Fn(&Variable) -> K,
         I: Fn(K, J) -> L
 {
-    let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped1 = runtime.pop_from_stack().unwrap();
+    let popped2 = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{} {} {}", desc, popped1, popped2);
     runtime.push_on_stack(creator(operation(extractor2(&popped2), extractor1(&popped1))));
 }
@@ -450,13 +399,13 @@ fn single_pop_instr<F, G, H, I, J>(desc: &str, runtime: &mut Runtime, creator: F
     G: Fn(&Variable) -> I,
     H: Fn(I) -> J
 {
-    let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{} {}", desc, popped);
     runtime.push_on_stack(creator(operation(extractor(&popped))));
 }
 
 fn vreturn<F, K>(desc: &str, runtime: &mut Runtime, extractor: F) -> Result<bool, RunnerError> where F: Fn(&Variable) -> K {
-    let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 1, "{} {}", desc, popped);
     extractor(&popped); // Type check
     runtime.current_frame = runtime.previous_frames.pop().unwrap();
@@ -604,8 +553,8 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
 }
 
 fn fcmp(desc: &str, runtime: &mut Runtime, is_g: bool) -> Result<(), RunnerError> {
-    let pop2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_float();
-    let pop1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_float();
+    let pop2 = runtime.pop_from_stack().unwrap().to_float();
+    let pop1 = runtime.pop_from_stack().unwrap().to_float();
     runnerPrint!(runtime, true, 2, "{} {} {}", desc, pop1, pop2);
     let ret;
     if pop1.is_nan() || pop2.is_nan() {
@@ -626,7 +575,7 @@ fn ifcmp<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, cmp: 
 {
     let current_position = buf.position() - 1;
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
-    let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{} {} {}", desc, popped, branch_offset);
     if cmp(popped.to_int()) {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
@@ -640,7 +589,7 @@ fn branch_if<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, c
     where F: Fn(&Variable) -> bool
 {
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
-    let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let var = runtime.pop_from_stack().unwrap();
     let compare_result = cmp(&var);
     runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, var, branch_offset, compare_result);
     if compare_result {
@@ -808,8 +757,8 @@ fn icmp<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, cmp: F
 {
     let current_position = buf.position() - 1;
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
-    let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped2 = runtime.pop_from_stack().unwrap();
+    let popped1 = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
     if cmp(popped1.to_int(), popped2.to_int()) {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
@@ -822,7 +771,7 @@ fn icmp<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, cmp: F
 fn cast<F>(desc: &str, runtime: &mut Runtime, mutator: F)
     where F: Fn(&Variable) -> Variable
 {
-    let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{} {}", desc, popped);
     runtime.push_on_stack(mutator(&popped));
 }
@@ -831,8 +780,8 @@ fn ifacmp(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, should_
 {
     let current_position = buf.position() - 1;
     let branch_offset = try!(buf.read_u16::<BigEndian>()) as i16;
-    let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-    let popped1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+    let popped2 = runtime.pop_from_stack().unwrap();
+    let popped1 = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
     let matching = match popped1 {
         Variable::Reference(ref obj1) => {
@@ -1010,13 +959,13 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         85 => try!(astore("CASTORE", runtime, |x| Variable::Char(std::char::from_u32((x.to_int() as u32) & 0xFF).unwrap()))),
         86 => try!(astore("SASTORE", runtime, |x| Variable::Short(x.to_int() as i16))),
         87 => {
-            let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let popped = runtime.pop_from_stack().unwrap();
             runnerPrint!(runtime, true, 2, "POP {}", popped);
         }
         88 => {
-            let popped = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let popped = runtime.pop_from_stack().unwrap();
             if popped.is_type_1() {
-                let popped2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+                let popped2 = runtime.pop_from_stack().unwrap();
                 runnerPrint!(runtime, true, 2, "POP2 {} {}", popped, popped2);
             } else {
                 runnerPrint!(runtime, true, 2, "POP2 {}", popped);
@@ -1110,8 +1059,8 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         146 => cast("I2C", runtime, |x| Variable::Char(std::char::from_u32(x.to_int() as u32).unwrap_or('\0'))),
         147 => cast("I2S", runtime, |x| Variable::Short(x.to_int() as i16)),
         148 => {
-            let pop2 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_long();
-            let pop1 = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_long();
+            let pop2 = runtime.pop_from_stack().unwrap().to_long();
+            let pop1 = runtime.pop_from_stack().unwrap().to_long();
             runnerPrint!(runtime, true, 2, "LCMP {} {}", pop1, pop2);
             let ret;
             if pop1 > pop2 {
@@ -1151,7 +1100,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
             let default = try!(buf.read_u32::<BigEndian>());
             let low = try!(buf.read_u32::<BigEndian>());
             let high = try!(buf.read_u32::<BigEndian>());
-            let value_int = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int() as u32;
+            let value_int = runtime.pop_from_stack().unwrap().to_int() as u32;
             runnerPrint!(runtime, true, 2, "TABLESWITCH {} {} {} {}", default, low, high, value_int);
             if value_int < low || value_int > high {
                 let new_pos = (current_position as i64 + default as i64) as u64;
@@ -1171,7 +1120,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
             buf.set_position((pos + 3) & !3);
             let default = try!(buf.read_u32::<BigEndian>());
             let npairs = try!(buf.read_u32::<BigEndian>());
-            let value_int = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().to_int();
+            let value_int = runtime.pop_from_stack().unwrap().to_int();
             runnerPrint!(runtime, true, 2, "LOOKUPSWITCH {} {} {}", default, npairs, value_int);
             let mut matched = false;
             for _i in 0..npairs { // TODO: Nonlinear search
@@ -1225,7 +1174,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         179 => { // putstatic
             let index = try!(buf.read_u16::<BigEndian>());
-            let value = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let value = runtime.pop_from_stack().unwrap();
             let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, index));
             runnerPrint!(runtime, true, 2, "PUTSTATIC {} {} {} {}", class_name, field_name, typ, value);
             try!(put_static(runtime, class_name.as_str(), field_name.as_str(), value));
@@ -1233,7 +1182,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         180 => {
             let field_index = try!(buf.read_u16::<BigEndian>());
             let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
-            let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let var = runtime.pop_from_stack().unwrap();
             let obj = var.to_ref();
             let f = try!(get_field(runtime, &obj, class_name.as_str(), field_name.as_str()));
             runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}' result:'{}'", class_name, field_name, typ, obj, f);
@@ -1242,8 +1191,8 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         181 => {
             let field_index = try!(buf.read_u16::<BigEndian>());
             let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
-            let value = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
-            let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let value = runtime.pop_from_stack().unwrap();
+            let var = runtime.pop_from_stack().unwrap();
             let obj = var.to_ref();
             runnerPrint!(runtime, true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj, value);
             try!(put_field(runtime, obj, class_name.as_str(), field_name.as_str(), value));
@@ -1275,7 +1224,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         188 => {
             let atype = try!(buf.read_u8());
-            let count = try!(pop_from_stack(&mut runtime.current_frame.operand_stack).ok_or(RunnerError::ClassInvalid("NEWARRAY POP fail"))).to_int();
+            let count = try!(runtime.pop_from_stack().ok_or(RunnerError::ClassInvalid("NEWARRAY POP fail"))).to_int();
             runnerPrint!(runtime, true, 2, "NEWARRAY {} {}", atype, count);
 
             let var : Variable;
@@ -1304,7 +1253,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
             let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, index));
             try!(load_class(runtime, class_name.as_str()));
             let class = runtime.classes.get(&*class_name).unwrap().clone();
-            let count = try!(pop_from_stack(&mut runtime.current_frame.operand_stack).ok_or(RunnerError::ClassInvalid("ANEWARRAY count fail"))).to_int();
+            let count = try!(runtime.pop_from_stack().ok_or(RunnerError::ClassInvalid("ANEWARRAY count fail"))).to_int();
             runnerPrint!(runtime, true, 2, "ANEWARRAY {} {}", class_name, count);
             let mut v : Vec<Variable> = Vec::new();
             for _c in 0..count {
@@ -1314,7 +1263,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
             runtime.push_on_stack(array_obj);
         }
         190 => {
-            let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let var = runtime.pop_from_stack().unwrap();
             let array_obj = var.to_arrayobj();
             if array_obj.is_null {
                 let exception = try!(construct_object(runtime, &"java/lang/NullPointerException"));
@@ -1325,7 +1274,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
             runtime.push_on_stack(Variable::Int(len as i32));
         }
         192 => {
-            let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let var = runtime.pop_from_stack().unwrap();
             let index = try!(buf.read_u16::<BigEndian>());
 
             runnerPrint!(runtime, true, 2, "CHECKCAST {} {}", var, index);
@@ -1342,7 +1291,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
             runtime.push_on_stack(var);
         }
         193 => {
-            let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let var = runtime.pop_from_stack().unwrap();
             let index = try!(buf.read_u16::<BigEndian>());
             let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, index));
 
@@ -1365,14 +1314,14 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
             runtime.push_on_stack(Variable::Int(if matches {1} else {0}));
         }
         194 => {
-            let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let var = runtime.pop_from_stack().unwrap();
             runnerPrint!(runtime, true, 2, "MONITORENTER {}", var);
             let _obj = var.to_ref();
             // TODO: Implement monitor
             runnerPrint!(runtime, true, 1, "WARNING: MonitorEnter not implemented");
         },
         195 => {
-            let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
+            let var = runtime.pop_from_stack().unwrap();
             runnerPrint!(runtime, true, 2, "MONITOREXIT {}", var);
             let _obj = var.to_ref();
             // TODO: Implement monitor
@@ -1775,5 +1724,5 @@ pub fn run_method(runtime: &mut Runtime, class_result: &ClassResult, method: &st
     runtime.current_frame.code = code;
     try!(do_run_method(runtime));
 
-    return Ok(pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap().clone());
+    return Ok(runtime.pop_from_stack().unwrap().clone());
 }

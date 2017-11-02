@@ -48,4 +48,10 @@ impl Runtime {
         }
         self.current_frame.operand_stack.push(var);
     }
+
+    pub fn pop_from_stack(&mut self) -> Option<Variable> {
+        let maybe_var = self.current_frame.operand_stack.pop();
+        maybe_var.as_ref().map(|x| {if !x.is_type_1() {self.current_frame.operand_stack.pop();}});
+        return maybe_var;
+    }
 }
