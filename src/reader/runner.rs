@@ -11,12 +11,14 @@ extern crate byteorder;
 extern crate rand;
 use reader::builtins::*;
 use reader::class_reader::*;
+pub use reader::types::frame::*;
+pub use reader::types::objects::*;
+pub use reader::types::runtime::*;
 pub use reader::types::variable::*;
 use reader::util::*;
 use std;
 use std::collections::HashMap;
 use std::cell::RefCell;
-use std::fmt;
 use std::io;
 use std::io::Cursor;
 use std::ops::BitAnd;
@@ -62,136 +64,6 @@ impl Class {
   pub fn new(name: &String, cr: &ClassResult) -> Class {
       return Class { name: name.clone(), initialising: RefCell::new(false), initialised: RefCell::new(false), cr: cr.clone(), statics: RefCell::new(HashMap::new()), super_class: RefCell::new(None)};
   }
-}
-
-#[derive(Clone, Debug)]
-pub struct Object {
-    pub is_null: bool,
-    pub type_ref: Rc<Class>,
-    pub members: RefCell<HashMap<String, Variable>>,
-    pub super_class: RefCell<Option<Rc<Object>>>,
-    pub sub_class: RefCell<Option<Weak<Object>>>,
-    pub code: i32
-}
-
-impl fmt::Display for Object {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        return match self.type_ref.name.as_str() {
-            "java/lang/String" => {
-                let str = string_to_string(self);
-                write!(f, "String {} '{}' null:{}", self.code, str.as_str(), self.is_null)
-            }
-            _ => {write!(f, "Object {} type:{} null:{}",self.code, self.type_ref.name.as_str(), self.is_null) }
-        }
-    }
-}
-impl PartialEq for Object { // Have to implement PartialEq because not derrivable for Weaks in general. We can assume the weak ref is constant.
-    fn eq(&self, other: &Self) -> bool {
-        let self_sub_class = self.sub_class.borrow();
-        let other_sub_class = other.sub_class.borrow();
-
-        return self.type_ref == other.type_ref &&
-            self.members == other.members &&
-            self_sub_class.is_some() == other_sub_class.is_some() &&
-            (self_sub_class.is_none() || (self_sub_class.clone().unwrap().upgrade() == other_sub_class.clone().unwrap().upgrade())) &&
-            self.super_class == other.super_class;
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct ArrayObject { // Can be either typed or primitive array (including nested)
-    pub is_null: bool,
-    pub element_type_ref: Option<Rc<Class>>,
-    pub element_type_str: String,
-    pub elements: RefCell<Vec<Variable>>,
-    pub code: i32,
-}
-
-impl fmt::Display for ArrayObject {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if self.is_null {
-            write!(f, "Array of type {} is NULL", self.element_type_str)
-        } else {
-            let vec = self.elements.borrow();
-            write!(f, "Array of type {} Size:{} ({})",
-                   self.element_type_str,
-                   vec.len(),
-                   vec.iter()
-                       .take(10)
-                       .map(|y| format!("{}", y))
-                       .fold(String::new(), |a, b| (a + ", " + b.as_str())))
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Frame {
-    pub class: Option<Rc<Class>>,
-    pub constant_pool: HashMap<u16, ConstantPoolItem>,
-    pub local_variables: Vec<Variable>,
-    pub operand_stack: Vec<Variable>,
-    pub return_pos: u64,
-    pub code: Code,
-    pub name: String
-}
-impl Frame {
-    pub fn new() -> Frame {
-        Frame {
-            class: None,
-            constant_pool: HashMap::new(),
-            operand_stack: Vec::new(),
-            local_variables: Vec::new(),
-            return_pos: 0,
-            code: Code::new(),
-            name: String::new()}
-    }
-}
-
-pub struct Runtime {
-    pub previous_frames: Vec<Frame>,
-    pub current_frame: Frame,
-    pub class_paths: Vec<String>,
-    pub classes: HashMap<String, Rc<Class>>,
-    pub count: i64,
-    pub current_thread: Option<Variable>,
-    pub string_interns: HashMap<String, Variable>,
-    pub properties: HashMap<String, Variable>,
-    pub class_objects: HashMap<String, Variable>,
-    pub object_count: i32,
-}
-impl Runtime {
-    fn  new(class_paths: Vec<String>) -> Runtime {
-        return Runtime {
-            class_paths: class_paths,
-            previous_frames: vec!(Frame::new()),
-            current_frame: Frame::new(),
-            classes: HashMap::new(),
-            count: 0,
-            current_thread: None,
-            string_interns: HashMap::new(),
-            properties: HashMap::new(),
-            class_objects: HashMap::new(),
-            object_count: rand::random::<i32>(),
-        };
-    }
-
-    pub fn reset_frames(&mut self) {
-        self.previous_frames = vec!(Frame::new());
-        self.current_frame = Frame::new();
-    }
-
-    pub fn get_next_object_code(&mut self) -> i32 {
-        let ret = self.object_count;
-        self.object_count += 1;
-        return ret;
-    }
-
-    pub fn push_on_stack(&mut self, var: Variable) {
-        if !var.is_type_1() {
-            self.current_frame.operand_stack.push(var.clone());
-        }
-        self.current_frame.operand_stack.push(var);
-    }
 }
 
 impl From<io::Error> for RunnerError {
@@ -250,50 +122,10 @@ fn descriptor_to_type_name(string: &str) -> Result<String, RunnerError> {
     return Ok(ret);
 }
 
-pub fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, RunnerError> {
-    let maybe_cp_entry = constant_pool.get(&index);
-    if maybe_cp_entry.is_none() {
-        debugPrint!(true, 1, "Missing CP string {}", index);
-        return Err(RunnerError::ClassInvalid2(format!("Missing CP string {}", index)));
-    } else {
-        match *maybe_cp_entry.unwrap() {
-            ConstantPoolItem::CONSTANT_Utf8(ref s) => {
-                return Ok(s.clone());
-            }
-            _ => {
-                debugPrint!(true, 1, "CP item at index {} is not utf8", index);
-                return Err(RunnerError::ClassInvalid2(format!("CP item at index {} is not utf8", index)));
-            }
-        }
-    }
-}
-
 fn pop_from_stack(operand_stack: &mut Vec<Variable>) -> Option<Variable> {
     let maybe_var = operand_stack.pop();
     maybe_var.as_ref().map(|x| {if !x.is_type_1() {operand_stack.pop();}});
     return maybe_var;
-}
-
-fn get_cp_class(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<Rc<String>, RunnerError> {
-    debugPrint!(false, 5, "{}", index);
-
-    let maybe_cp_entry = constant_pool.get(&index);
-    if maybe_cp_entry.is_none() {
-        debugPrint!(true, 1, "Missing CP class {}", index);
-        return Err(RunnerError::ClassInvalid2(format!("Missing CP class {}", index)));
-    } else {
-        match *maybe_cp_entry.unwrap() {
-            ConstantPoolItem::CONSTANT_Class {index} => {
-                debugPrint!(false, 4, "name_index: {}", index);
-
-                let name_str = try!(get_cp_str(&constant_pool, index));
-                return Ok(name_str);
-            }
-            _ => {
-                return Err(RunnerError::ClassInvalid2(format!("Index {} is not a class", index)));
-            }
-        }
-    }
 }
 
 fn get_cp_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(Rc<String>, Rc<String>), RunnerError> {
@@ -327,7 +159,7 @@ fn get_cp_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> R
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Fieldref{class_index, name_and_type_index} => {
-                let class_str = try!(get_cp_class(constant_pool, class_index));
+                let class_str = try!(get_cp_class_name(constant_pool, class_index));
                 let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
                 return Ok((class_str, name_str, type_str));
             }
@@ -347,12 +179,12 @@ fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> 
     } else {
         match *maybe_cp_entry.unwrap() {
             ConstantPoolItem::CONSTANT_Methodref {class_index, name_and_type_index} => {
-                let class_str = try!(get_cp_class(constant_pool, class_index));
+                let class_str = try!(get_cp_class_name(constant_pool, class_index));
                 let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
                 return Ok((class_str, name_str, type_str));
             }
             ConstantPoolItem::CONSTANT_InterfaceMethodref {class_index, name_and_type_index} => {
-                let class_str = try!(get_cp_class(constant_pool, class_index));
+                let class_str = try!(get_cp_class_name(constant_pool, class_index));
                 let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
                 return Ok((class_str, name_str, type_str));
             }
@@ -489,7 +321,7 @@ pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, R
 
 fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
     let debug = false;
-    let class_name = try!(get_cp_class(&class.constant_pool, class.this_class_index));
+    let class_name = try!(get_cp_class_name(&class.constant_pool, class.this_class_index));
     let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid2(format!("Could not find method {} with descriptor {} in class {}", target_method_name, target_descriptor, class_name)));
 
     for method in &class.methods {
@@ -1436,7 +1268,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         187 => {
             let index = try!(buf.read_u16::<BigEndian>());
-            let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
+            let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, index));
             runnerPrint!(runtime, true, 2, "NEW {}", class_name);
             let var = try!(construct_object(runtime, class_name.as_str()));
             runtime.push_on_stack(var);
@@ -1469,7 +1301,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         189 => {
             let index = try!(buf.read_u16::<BigEndian>());
-            let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
+            let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, index));
             try!(load_class(runtime, class_name.as_str()));
             let class = runtime.classes.get(&*class_name).unwrap().clone();
             let count = try!(pop_from_stack(&mut runtime.current_frame.operand_stack).ok_or(RunnerError::ClassInvalid("ANEWARRAY count fail"))).to_int();
@@ -1512,7 +1344,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         193 => {
             let var = pop_from_stack(&mut runtime.current_frame.operand_stack).unwrap();
             let index = try!(buf.read_u16::<BigEndian>());
-            let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, index));
+            let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, index));
 
             runnerPrint!(runtime, true, 2, "INSTANCEOF {} {}", var, class_name);
 
@@ -1575,7 +1407,7 @@ fn do_run_method(runtime: &mut Runtime) -> Result<(), RunnerError> {
                         for e in &runtime.current_frame.code.exceptions.clone() {
                             if current_position >= e.start_pc as u64 && current_position <= e.end_pc as u64 {
                                 if e.catch_type > 0 {
-                                    let class_name = try!(get_cp_class(&runtime.current_frame.constant_pool, e.catch_type));
+                                    let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, e.catch_type));
                                     if exception.to_ref().type_ref.name != *class_name {
                                         continue;
                                     }
@@ -1732,7 +1564,7 @@ fn initialise_class_stage_1(runtime: &mut Runtime, mut class: Rc<Class>) -> Resu
 
         let super_class_name =
             if class.cr.super_class_index > 0 {
-                (*try!(get_cp_class(&class.cr.constant_pool, class.cr.super_class_index))).clone()
+                (*try!(get_cp_class_name(&class.cr.constant_pool, class.cr.super_class_index))).clone()
             } else if class.name != "java/lang/Object" {
                 String::from("java/lang/Object")
             } else {
