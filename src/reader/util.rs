@@ -1,4 +1,5 @@
 use reader::runner::*;
+use std;
 use std::rc::Rc;
 
 pub fn push_on_stack(operand_stack: &mut Vec<Variable>, var: Variable) {
@@ -77,4 +78,13 @@ pub fn type_name_to_descriptor(name: &String) -> String {
             return ret;
         }
     });
+}
+
+pub fn rc_ptr_eq<T: ?Sized>(this: &Rc<T>, other: &Rc<T>) -> bool
+    where T: std::fmt::Display
+{
+    let this_ptr: *const T = &**this;
+    let other_ptr: *const T = &**other;
+    debugPrint!(false, 2, "RC ptr eq {} {:p} {} {:p}", this, this_ptr, other, other_ptr);
+    this_ptr == other_ptr
 }

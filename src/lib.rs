@@ -9,6 +9,8 @@ pub mod reader {
     mod util;
     mod builtins {
         pub mod java_lang;
+        pub mod java_other;
+        pub mod sun;
     }
 }
 
