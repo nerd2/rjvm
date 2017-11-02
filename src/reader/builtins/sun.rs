@@ -1,4 +1,5 @@
 use reader::runner::*;
+use reader::jvm::class_objects::*;
 use reader::util::*;
 use std::rc::Rc;
 
@@ -53,7 +54,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("sun/misc/VM", "initialize", "()V") => {}
         ("sun/reflect/Reflection", "getCallerClass", "()Ljava/lang/Class;") => {
             let class = runtime.previous_frames[runtime.previous_frames.len()-1].class.clone().unwrap();
-            let var = try!(make_class(runtime, type_name_to_descriptor(&class.name).as_str()));
+            let var = try!(get_class_object_from_descriptor(runtime, type_name_to_descriptor(&class.name).as_str()));
             runnerPrint!(runtime, true, 2, "BUILTIN: getCallerClass {}", var);
             runtime.push_on_stack(var);
         }

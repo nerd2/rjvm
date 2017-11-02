@@ -1,3 +1,5 @@
+use reader::jvm::class_objects::*;
+use reader::jvm::interpreter::*;
 use reader::runner::*;
 use reader::util::*;
 use reader::class_reader::*;
@@ -26,7 +28,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let string = try!(extract_from_string(runtime, &obj));
             let descriptor = type_name_to_descriptor(&string);
             runnerPrint!(runtime, true, 2, "BUILTIN: getPrimitiveClass {} {}", string, descriptor);
-            let var = try!(get_primitive_class(runtime, descriptor));
+            let var = try!(get_primitive_class_object(runtime, descriptor));
             runtime.push_on_stack(var);
         }
         ("java/lang/Class", "isAssignableFrom", "(Ljava/lang/Class;)Z") => {
@@ -61,7 +63,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let ref caller_class = args[3];
             runnerPrint!(runtime, true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
 
-            let var = try!(make_class(runtime, type_name_to_descriptor(&descriptor).as_str()));
+            let var = try!(get_class_object_from_descriptor(runtime, type_name_to_descriptor(&descriptor).as_str()));
             runtime.push_on_stack(var);
         }
         ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {runtime.push_on_stack(Variable::Boolean(false));}
@@ -194,7 +196,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         },
         ("java/lang/Object", "getClass", "()Ljava/lang/Class;") => {
             let ref descriptor = args[0].get_descriptor();
-            let var = try!(make_class(runtime, descriptor.as_str()));
+            let var = try!(get_class_object_from_descriptor(runtime, descriptor.as_str()));
             runnerPrint!(runtime, true, 2, "BUILTIN: getClass {} {}", descriptor, var);
             runtime.push_on_stack(var);
         },

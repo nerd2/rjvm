@@ -8,6 +8,7 @@ pub mod reader {
     pub mod runner;
     mod util;
     mod builtins;
+    mod jvm;
     mod types {
         pub mod class;
         pub mod constant_pool;
