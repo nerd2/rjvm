@@ -43,12 +43,22 @@ pub enum RunnerError {
     ClassInvalid2(String),
     InvalidPc,
     IoError,
-    NativeMethod(String),
     UnknownOpCode(u8),
     ClassNotLoaded(String),
     Exception(Variable),
     Return,
     Invoke
+}
+
+impl From<io::Error> for RunnerError {
+    fn from(_err: io::Error) -> RunnerError {
+        RunnerError::IoError
+    }
+}
+impl From<ClassReadError> for RunnerError {
+    fn from(err: ClassReadError) -> RunnerError {
+        RunnerError::ClassInvalid2(format!("{:?}", err))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,26 +74,6 @@ impl Class {
   pub fn new(name: &String, cr: &ClassResult) -> Class {
       return Class { name: name.clone(), initialising: RefCell::new(false), initialised: RefCell::new(false), cr: cr.clone(), statics: RefCell::new(HashMap::new()), super_class: RefCell::new(None)};
   }
-}
-
-impl From<io::Error> for RunnerError {
-    fn from(_err: io::Error) -> RunnerError {
-        RunnerError::IoError
-    }
-}
-impl From<ClassReadError> for RunnerError {
-    fn from(err: ClassReadError) -> RunnerError {
-        RunnerError::ClassInvalid2(format!("{:?}", err))
-    }
-}
-
-fn get_most_sub_class(mut obj: Rc<Object>) -> Rc<Object>{
-    // Go to top of chain
-    while obj.sub_class.borrow().is_some() {
-        let new_obj = obj.sub_class.borrow().as_ref().unwrap().upgrade().unwrap();
-        obj = new_obj;
-    }
-    return obj;
 }
 
 fn initialise_variable(runtime: &mut Runtime, descriptor_string: &str) -> Result<Variable, RunnerError> {
@@ -198,37 +188,6 @@ pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, R
         } else {
             return Ok(Variable::Reference(original_obj.unwrap()));
         }
-    }
-}
-
-fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
-    let debug = false;
-    let class_name = try!(class.constant_pool.get_class_name(class.this_class_index));
-    let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid2(format!("Could not find method {} with descriptor {} in class {}", target_method_name, target_descriptor, class_name)));
-
-    for method in &class.methods {
-        let method_name = try!(class.constant_pool.get_str(method.name_index));
-        let descriptor = try!(class.constant_pool.get_str(method.descriptor_index));
-        debugPrint!(debug, 3, "Checking method {} {}", method_name, descriptor);
-        if method_name.as_str() == target_method_name &&
-            descriptor.as_str() == target_descriptor {
-            method_res = Ok(method);
-            break;
-        }
-    }
-
-    let method = try!(method_res);
-    debugPrint!(debug, 3, "Found method");
-    if (method.access_flags & ACC_NATIVE) != 0 {
-        return Err(RunnerError::NativeMethod(format!("Method '{}' descriptor '{}' in class '{}'", target_method_name, target_descriptor, class_name)));
-    } else {
-        let code = try!(method.attributes.iter().filter_map(|x|
-            match x {
-                &AttributeItem::Code(ref c) => Some(c),
-                _ => None
-            })
-            .nth(0).ok_or(RunnerError::ClassInvalid("Class method has no code")));
-        return Ok(code.clone());
     }
 }
 
@@ -375,25 +334,26 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
 }
 
 pub fn invoke_nested(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, method_name: &str, method_descriptor: &str, allow_not_found: bool) -> Result<(), RunnerError>{
-    let maybe_code = get_class_method_code(&class.cr, method_name, method_descriptor);
+    let maybe_code = class.cr.get_code(method_name, method_descriptor);
     if maybe_code.is_err() {
         if allow_not_found { return Ok(()) }
-        else { return Err(maybe_code.err().unwrap()) };
-    }
-    let new_frame = Frame {
-        class: Some(class.clone()),
-        constant_pool: class.cr.constant_pool.clone(),
-        operand_stack: Vec::new(),
-        local_variables: args.clone(),
-        name: String::from(class.name.clone() + method_name),
-        code: maybe_code.unwrap(),
-        return_pos: 0,
-    };
+        else { try!(Err(maybe_code.err().unwrap())) }
+    } else {
+        let new_frame = Frame {
+            class: Some(class.clone()),
+            constant_pool: class.cr.constant_pool.clone(),
+            operand_stack: Vec::new(),
+            local_variables: args.clone(),
+            name: String::from(class.name.clone() + method_name),
+            code: maybe_code.unwrap(),
+            return_pos: 0,
+        };
 
-    runnerPrint!(runtime, true, 1, "INVOKE manual {} {} on {}", method_name, method_descriptor, class.name);
-    runtime.previous_frames.push(runtime.current_frame.clone());
-    runtime.current_frame = new_frame;
-    return do_run_method(runtime);
+        runnerPrint!(runtime, true, 1, "INVOKE manual {} {} on {}", method_name, method_descriptor, class.name);
+        runtime.previous_frames.push(runtime.current_frame.clone());
+        runtime.current_frame = new_frame;
+        return do_run_method(runtime);
+    }
 }
 
 
@@ -456,7 +416,7 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
             }
 
             // Find method
-            while { code = get_class_method_code(&obj.type_ref.cr, method_name.as_str(), descriptor.as_str()).ok(); code.is_none() } {
+            while { code = obj.type_ref.cr.get_code(method_name.as_str(), descriptor.as_str()).ok(); code.is_none() } {
                 if obj.super_class.borrow().is_none() {
                     return Err(RunnerError::ClassInvalid2(format!("Could not find super class of object '{}' that matched method '{}' '{}'", obj, method_name, descriptor)))
                 }
@@ -465,7 +425,7 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
             }
             class = obj.type_ref.clone();
         } else {
-            code = Some(try!(get_class_method_code(&class.cr, method_name.as_str(), descriptor.as_str())));
+            code = Some(try!(class.cr.get_code(method_name.as_str(), descriptor.as_str())));
         }
 
         new_frame = Some(Frame {
@@ -1608,7 +1568,7 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
 
     try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
 
-    let main_code = try!(get_class_method_code(class, &"main", &"([Ljava/lang/String;)V"));
+    let main_code = try!(class.get_code(&"main", &"([Ljava/lang/String;)V"));
     runtime.current_frame.code = main_code;
 
     try!(do_run_method(&mut runtime));
@@ -1648,7 +1608,7 @@ pub fn run_method(runtime: &mut Runtime, class_result: &ClassResult, method: &st
 
     let method_descriptor = generate_method_descriptor(&arguments, return_descriptor, true);
     runnerPrint!(runtime, true, 1, "Finding method {} with descriptor {}", method, method_descriptor);
-    let code = try!(get_class_method_code(class_result, method, method_descriptor.as_str()));
+    let code = try!(class_result.get_code(method, method_descriptor.as_str()));
 
     println!("Running method");
     runtime.current_frame.code = code;

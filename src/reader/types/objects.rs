@@ -27,6 +27,7 @@ impl fmt::Display for Object {
         }
     }
 }
+
 impl PartialEq for Object { // Have to implement PartialEq because not derrivable for Weaks in general. We can assume the weak ref is constant.
     fn eq(&self, other: &Self) -> bool {
         let self_sub_class = self.sub_class.borrow();
@@ -38,6 +39,15 @@ impl PartialEq for Object { // Have to implement PartialEq because not derrivabl
             (self_sub_class.is_none() || (self_sub_class.clone().unwrap().upgrade() == other_sub_class.clone().unwrap().upgrade())) &&
             self.super_class == other.super_class;
     }
+}
+
+pub fn get_most_sub_class(mut obj: Rc<Object>) -> Rc<Object>{
+    // Go to top of chain
+    while obj.sub_class.borrow().is_some() {
+        let new_obj = obj.sub_class.borrow().as_ref().unwrap().upgrade().unwrap();
+        obj = new_obj;
+    }
+    return obj;
 }
 
 #[derive(Clone, Debug, PartialEq)]

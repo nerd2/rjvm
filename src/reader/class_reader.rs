@@ -33,6 +33,7 @@ pub enum ClassReadError {
     Io(io::Error),
     Parse,
     Parse2(String),
+    NativeMethod(String),
     UTF8Error(String),
     UnsupportedVersion(f32)
 }
@@ -143,9 +144,42 @@ impl ClassResult {
             code: None
         }
     }
+
     pub fn name(&self) -> Result<Rc<String>, ClassReadError> {
         return self.constant_pool.get_class_name(self.this_class_index);
     }
+
+    pub fn get_code(&self, target_method_name: &str, target_descriptor: &str) -> Result<Code, ClassReadError> {
+        let debug = false;
+        let class_name = try!(self.constant_pool.get_class_name(self.this_class_index));
+        let mut method_res: Result<&FieldItem, ClassReadError> = Err(ClassReadError::Parse2(format!("Could not find method {} with descriptor {} in class {}", target_method_name, target_descriptor, class_name)));
+
+        for method in &self.methods {
+            let method_name = try!(self.constant_pool.get_str(method.name_index));
+            let descriptor = try!(self.constant_pool.get_str(method.descriptor_index));
+            debugPrint!(debug, 3, "Checking method {} {}", method_name, descriptor);
+            if method_name.as_str() == target_method_name &&
+                descriptor.as_str() == target_descriptor {
+                method_res = Ok(method);
+                break;
+            }
+        }
+
+        let method = try!(method_res);
+        debugPrint!(debug, 3, "Found method");
+        if (method.access_flags & ACC_NATIVE) != 0 {
+            return Err(ClassReadError::NativeMethod(format!("Method '{}' descriptor '{}' in class '{}'", target_method_name, target_descriptor, class_name)));
+        } else {
+            let code = try!(method.attributes.iter().filter_map(|x|
+                match x {
+                    &AttributeItem::Code(ref c) => Some(c),
+                    _ => None
+                })
+                .nth(0).ok_or(ClassReadError::Parse2(String::from("Class method has no code"))));
+            return Ok(code.clone());
+        }
+    }
+
 }
 
 impl From<io::Error> for ClassReadError {
