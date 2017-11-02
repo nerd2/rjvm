@@ -2,13 +2,6 @@ use reader::runner::*;
 use std;
 use std::rc::Rc;
 
-pub fn push_on_stack(operand_stack: &mut Vec<Variable>, var: Variable) {
-    if !var.is_type_1() {
-        operand_stack.push(var.clone());
-    }
-    operand_stack.push(var);
-}
-
 pub fn make_string(runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerError> {
     let var = try!(construct_object(runtime, &"java/lang/String"));
     let obj = var.to_ref();

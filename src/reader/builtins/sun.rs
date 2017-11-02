@@ -7,26 +7,26 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("sun/misc/Unsafe", "registerNatives", "()V") => {return Ok(true)},
         ("sun/misc/Unsafe", "arrayBaseOffset", "(Ljava/lang/Class;)I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: arrayBaseOffset");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(0));
+            runtime.push_on_stack(Variable::Int(0));
         },
         ("sun/misc/Unsafe", "objectFieldOffset", "(Ljava/lang/reflect/Field;)J") => {
             let obj = args[1].clone().to_ref();
             let slot = try!(get_field(runtime, &obj, &"java/lang/reflect/Field", "slot")).to_int();
 
             runnerPrint!(runtime, true, 2, "BUILTIN: objectFieldOffset {} {}", obj, slot);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(slot as i64));
+            runtime.push_on_stack(Variable::Long(slot as i64));
         },
         ("sun/misc/Unsafe", "arrayIndexScale", "(Ljava/lang/Class;)I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: arrayIndexScale");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(1));
+            runtime.push_on_stack(Variable::Int(1));
         },
         ("sun/misc/Unsafe", "addressSize", "()I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: addressSize");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(4));
+            runtime.push_on_stack(Variable::Int(4));
         },
         ("sun/misc/Unsafe", "pageSize", "()I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: pageSize");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(4096));
+            runtime.push_on_stack(Variable::Int(4096));
         },
         ("sun/misc/Unsafe", "compareAndSwapObject", "(Ljava/lang/Object;JLjava/lang/Object;Ljava/lang/Object;)Z") => {
             let obj = args[1].clone().to_ref();
@@ -48,14 +48,14 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             } else {
                 ret = false;
             }
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(ret));
+            runtime.push_on_stack(Variable::Boolean(ret));
         }
         ("sun/misc/VM", "initialize", "()V") => {}
         ("sun/reflect/Reflection", "getCallerClass", "()Ljava/lang/Class;") => {
             let class = runtime.previous_frames[runtime.previous_frames.len()-1].class.clone().unwrap();
             let var = try!(make_class(runtime, type_name_to_descriptor(&class.name).as_str()));
             runnerPrint!(runtime, true, 2, "BUILTIN: getCallerClass {}", var);
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
+            runtime.push_on_stack(var);
         }
         _ => return Ok(false)
     };

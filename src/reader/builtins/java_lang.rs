@@ -12,14 +12,14 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let members = obj.members.borrow();
             let value = members.get(&String::from("__is_array")).unwrap();
             runnerPrint!(runtime, true, 2, "BUILTIN: is_array {}", value);
-            push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
+            runtime.push_on_stack(value.clone());
         }
         ("java/lang/Class", "isPrimitive", "()Z") => {
             let obj = args[0].clone().to_ref();
             let members = obj.members.borrow();
             let value = members.get(&String::from("__is_primitive")).unwrap();
             runnerPrint!(runtime, true, 2, "BUILTIN: is_primitive {}", value);
-            push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
+            runtime.push_on_stack(value.clone());
         }
         ("java/lang/Class", "getPrimitiveClass", "(Ljava/lang/String;)Ljava/lang/Class;") => {
             let obj = args[0].clone().to_ref();
@@ -27,7 +27,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let descriptor = type_name_to_descriptor(&string);
             runnerPrint!(runtime, true, 2, "BUILTIN: getPrimitiveClass {} {}", string, descriptor);
             let var = try!(get_primitive_class(runtime, descriptor));
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
+            runtime.push_on_stack(var);
         }
         ("java/lang/Class", "isAssignableFrom", "(Ljava/lang/Class;)Z") => {
             let class_object_1 = args[0].clone().to_ref();
@@ -40,7 +40,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
                 class1 = new_class1;
             }
 
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(class1 == class2));
+            runtime.push_on_stack(Variable::Boolean(class1 == class2));
         }
         ("java/lang/Class", "getComponentType", "()Ljava/lang/Class;") => {
             let class_object_1 = args[0].clone().to_ref();
@@ -51,7 +51,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let var = class_object_1.members.borrow().get(&String::from("__componentType")).unwrap().clone();
             runnerPrint!(runtime, true, 2, "BUILTIN: getComponentType {}", var);
 
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
+            runtime.push_on_stack(var);
         },
         ("java/lang/Class", "forName0", "(Ljava/lang/String;ZLjava/lang/ClassLoader;Ljava/lang/Class;)Ljava/lang/Class;") => {
             let descriptor_string_obj = args[0].clone().to_ref();
@@ -62,9 +62,9 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             runnerPrint!(runtime, true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
 
             let var = try!(make_class(runtime, type_name_to_descriptor(&descriptor).as_str()));
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
+            runtime.push_on_stack(var);
         }
-        ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
+        ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {runtime.push_on_stack(Variable::Boolean(false));}
         ("java/lang/Class", "getDeclaredFields0", "(Z)[Ljava/lang/reflect/Field;") => {
             let class_obj = args[0].to_ref();
             let class = class_obj.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
@@ -85,7 +85,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
                 index += 1;
             }
             let fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", Some(field_objects)));
-            push_on_stack(&mut runtime.current_frame.operand_stack, fields_array);
+            runtime.push_on_stack(fields_array);
         }
         ("java/lang/Class", "getDeclaredMethods0", "(Z)[Ljava/lang/reflect/Method;") => {
             let class_obj = args[0].to_ref();
@@ -104,7 +104,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
                 method_objects.push(methods_object);
             }
             let methods_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Method", Some(method_objects)));
-            push_on_stack(&mut runtime.current_frame.operand_stack, methods_array);
+            runtime.push_on_stack(methods_array);
         }
         ("java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: arrayCopy {} {} {} {} {}", args[0], args[1], args[2], args[3], args[4]);
@@ -138,64 +138,65 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let string = try!(extract_from_string(runtime, &obj));
             if runtime.properties.contains_key(&string) {
                 runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} valid", string);
-                push_on_stack(&mut runtime.current_frame.operand_stack, runtime.properties.get(&string).unwrap().clone());
+                let property = runtime.properties.get(&string).unwrap().clone();
+                runtime.push_on_stack(property);
             } else {
                 runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} NULL", string);
                 let null_string = try!(construct_null_object_by_name(runtime, "java/lang/String"));
-                push_on_stack(&mut runtime.current_frame.operand_stack, null_string);
+                runtime.push_on_stack(null_string);
             }
         },
         ("java/lang/Runtime", "availableProcessors", "()I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: availableProcessors");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(1));
+            runtime.push_on_stack(Variable::Int(1));
         },
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
         ("java/lang/String", "intern", "()Ljava/lang/String;") => {
             let interned = try!(string_intern(runtime, &args[0]));
             runnerPrint!(runtime, true, 2, "BUILTIN: intern {} {:p}", args[0], &*interned.to_ref());
-            push_on_stack(&mut runtime.current_frame.operand_stack, interned);
+            runtime.push_on_stack(interned);
         },
         ("java/lang/Float", "floatToRawIntBits", "(F)I") => {
             let float = args[0].to_float();
             let bits = unsafe {std::mem::transmute::<f32, u32>(float)};
             runnerPrint!(runtime, true, 2, "BUILTIN: floatToRawIntBits {} {}", float, bits);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(bits as i32));
+            runtime.push_on_stack(Variable::Int(bits as i32));
         },
         ("java/lang/Float", "intBitsToFloat", "(I)F") => {
             let int = args[0].to_int();
             let float = unsafe {std::mem::transmute::<i32, f32>(int)};
             runnerPrint!(runtime, true, 2, "BUILTIN: intBitsToFloat {} {}", int, float);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Float(float));
+            runtime.push_on_stack(Variable::Float(float));
         },
         ("java/lang/Double", "doubleToRawLongBits", "(D)J") => {
             let double = args[0].to_double();
             let bits = unsafe {std::mem::transmute::<f64, u64>(double)};
             runnerPrint!(runtime, true, 2, "BUILTIN: doubleToRawIntBits {} {}", double, bits);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(bits as i64));
+            runtime.push_on_stack(Variable::Long(bits as i64));
         },
         ("java/lang/Double", "longBitsToDouble", "(J)D") => {
             let long = args[0].to_long();
             let double = unsafe {std::mem::transmute::<i64, f64>(long)};
             runnerPrint!(runtime, true, 2, "BUILTIN: doubleToRawIntBits {} {}", long, double);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Double(double));
+            runtime.push_on_stack(Variable::Double(double));
         },
         ("java/lang/SecurityManager", "checkPermission", "(Ljava/security/Permission;)V") => {
         },
         ("java/lang/Object", "hashCode", "()I") => {
             let code = try!(args[0].hash_code(runtime));
             runnerPrint!(runtime, true, 2, "BUILTIN: hashcode {}", code);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(code));
+            runtime.push_on_stack(Variable::Int(code));
         },
         ("java/lang/System", "identityHashCode", "(Ljava/lang/Object;)I") => {
             let code = try!(args[0].hash_code(runtime));
             runnerPrint!(runtime, true, 2, "BUILTIN: identityHashCode {}", code); // TODO test
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(code));
+            runtime.push_on_stack(Variable::Int(code));
         },
         ("java/lang/Object", "getClass", "()Ljava/lang/Class;") => {
             let ref descriptor = args[0].get_descriptor();
             let var = try!(make_class(runtime, descriptor.as_str()));
             runnerPrint!(runtime, true, 2, "BUILTIN: getClass {} {}", descriptor, var);
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
+            runtime.push_on_stack(var);
         },
         ("java/lang/ClassLoader", "registerNatives", "()V") => {},
         ("java/lang/Thread", "registerNatives", "()V") => {},
@@ -204,7 +205,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let members = obj.members.borrow();
             let var = members.get(&String::from("__alive")).unwrap_or(&Variable::Boolean(false)).clone();
             runnerPrint!(runtime, true, 2, "BUILTIN: isAlive {}", var);
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
+            runtime.push_on_stack(var);
         },
         ("java/lang/Thread", "start0", "()V") => {
             // TODO
@@ -238,7 +239,8 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
                     members.insert(String::from("__alive"), Variable::Boolean(true));
                 }
             }
-            push_on_stack(&mut runtime.current_frame.operand_stack, runtime.current_thread.as_ref().unwrap().clone());
+            let thread = runtime.current_thread.as_ref().unwrap().clone();
+            runtime.push_on_stack(thread);
         },
         _ => return Ok(false)
     };
