@@ -1,3 +1,4 @@
+use reader::jvm::construction::*;
 use reader::runner::*;
 use reader::util::*;
 use std::cell::RefCell;
@@ -48,6 +49,84 @@ pub fn get_most_sub_class(mut obj: Rc<Object>) -> Rc<Object>{
         obj = new_obj;
     }
     return obj;
+}
+
+pub fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, RunnerError> {
+    while obj.type_ref.name != class_name && obj.super_class.borrow().is_some() {
+        let new_obj = obj.super_class.borrow().clone().unwrap();
+        obj = new_obj;
+        debugPrint!(false, 3, "Class didn't match, checking '{}' now)", obj.type_ref.name);
+    }
+
+    if obj.type_ref.name != class_name {
+        debugPrint!(true, 1, "Expected object on stack with class name '{}' but got '{}'", class_name, obj.type_ref.name);
+        return Err(RunnerError::ClassInvalid2(format!("Couldn't find object on stack with class name '{}'", class_name)));
+    }
+
+    return Ok(obj);
+}
+
+// Get the (super)object which contains a field
+pub fn get_obj_field(mut obj: Rc<Object>, field_name: &str) -> Result<Rc<Object>, RunnerError> {
+    let class_name = obj.type_ref.name.clone();
+    while {let members = obj.members.borrow(); !members.contains_key(field_name) } {
+        let new_obj = obj.super_class.borrow().clone();
+        if new_obj.is_none() {
+            return Err(RunnerError::ClassInvalid2(format!("Couldn't find field '{}' in class {}", field_name, class_name)));
+        }
+        obj = new_obj.unwrap();
+    }
+    return Ok(obj.clone());
+}
+
+pub fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    let debug = false;
+    runnerPrint!(runtime, debug, 2, "Put Static Field {} {} {}", class_name, field_name, value);
+    let class_result = try!(load_class(runtime, class_name));
+    let mut statics = class_result.statics.borrow_mut();
+    if !statics.contains_key(field_name) {
+        return Err(RunnerError::ClassInvalid2(format!("Couldn't find static '{}' in class '{}' to put", field_name, class_name)));;
+    }
+    statics.insert(String::from(field_name), value);
+    return Ok(());
+}
+
+pub fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    let debug = false;
+    runnerPrint!(runtime, debug, 2, "Put Field {} {} {}", class_name, field_name, value);
+    let super_obj = try!(get_super_obj(obj, class_name));
+    let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
+    let mut members = super_obj_with_field.members.borrow_mut();
+    members.insert(String::from(field_name), value);
+    return Ok(());
+}
+
+pub fn get_field(runtime: &mut Runtime, obj: &Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
+    let debug = false;
+
+    runnerPrint!(runtime, debug, 2, "Get Field {} {} {}", *obj, class_name, field_name);
+
+    if obj.is_null {
+        let exception = try!(construct_object(runtime, &"java/lang/NullPointerException"));
+        return Err(RunnerError::Exception(exception));
+    }
+
+    let super_obj = try!(get_super_obj(obj.clone(), class_name));
+    let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
+    let mut members = super_obj_with_field.members.borrow_mut();
+
+    let unresolved_type_name;
+    {
+        let member = members.get(&*field_name).unwrap();
+        if !member.is_unresolved() {
+            return Ok(member.clone());
+        }
+        unresolved_type_name = member.get_unresolved_type_name().clone();
+    }
+
+    let var = try!(construct_null_object_by_name(runtime, unresolved_type_name.as_str()));
+    members.insert(String::from(field_name), var.clone());
+    return Ok(var);
 }
 
 #[derive(Clone, Debug, PartialEq)]

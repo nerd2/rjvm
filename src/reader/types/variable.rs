@@ -1,3 +1,4 @@
+use reader::jvm::construction::*;
 use reader::runner::*;
 use reader::util::*;
 use std::fmt;

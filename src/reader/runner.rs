@@ -9,7 +9,7 @@
 
 extern crate rand;
 use reader::class_reader::*;
-use reader::jvm::class_objects::*;
+use reader::jvm::construction::*;
 use reader::jvm::interpreter::*;
 pub use reader::types::class::*;
 pub use reader::types::frame::*;
@@ -17,12 +17,9 @@ pub use reader::types::objects::*;
 pub use reader::types::runtime::*;
 pub use reader::types::variable::*;
 use reader::util::*;
-use std::collections::HashMap;
-use std::cell::RefCell;
 use std::io;
 use std::io::Cursor;
 use std::rc::Rc;
-use std::rc::Weak;
 use std::path::Path;
 use std::path::PathBuf;
 use glob::glob;
@@ -55,225 +52,6 @@ impl From<ClassReadError> for RunnerError {
     fn from(err: ClassReadError) -> RunnerError {
         RunnerError::ClassInvalid2(format!("{:?}", err))
     }
-}
-
-fn initialise_variable(runtime: &mut Runtime, descriptor_string: &str) -> Result<Variable, RunnerError> {
-    let variable = try!(parse_single_type_string(runtime, descriptor_string, false));
-    return Ok(variable);
-}
-
-pub fn construct_char_array(runtime: &mut Runtime, s: &str) -> Variable {
-    let mut v : Vec<Variable> = Vec::new();
-    for c in s.chars() {
-        v.push(Variable::Char(c));
-    }
-    let array_object = ArrayObject {
-        is_null: false,
-        element_type_ref: None,
-        element_type_str: String::from("C"),
-        elements: RefCell::new(v),
-        code: runtime.get_next_object_code()
-    };
-    return Variable::ArrayReference(Rc::new(array_object));
-}
-
-pub fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
-    let array_object = ArrayObject {
-        is_null: data.is_none(),
-        element_type_ref: Some(class.clone()),
-        element_type_str: generate_class_descriptor(&class),
-        elements: RefCell::new(data.unwrap_or(Vec::new())),
-        code: runtime.get_next_object_code()
-    };
-    return Ok(Variable::ArrayReference(Rc::new(array_object)));
-}
-
-pub fn construct_array_by_name(runtime: &mut Runtime, name: &str, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
-    let class = try!(load_class(runtime, name));
-    return construct_array(runtime, class, data);
-}
-
-pub fn construct_primitive_array(runtime: &mut Runtime, element_type: &str, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
-    // TODO
-    let array_object = ArrayObject {
-        is_null: data.is_none(),
-        element_type_ref: None,
-        element_type_str: String::from(element_type),
-        elements: RefCell::new(data.unwrap_or(Vec::new())),
-        code: runtime.get_next_object_code()
-    };
-    return Ok(Variable::ArrayReference(Rc::new(array_object)));
-}
-
-pub fn construct_null_object(runtime: &mut Runtime, class: Rc<Class>) -> Result<Variable, RunnerError> {
-    let obj = Rc::new(Object {
-        is_null: true,
-        type_ref: class,
-        members: RefCell::new(HashMap::new()),
-        super_class: RefCell::new(None),
-        sub_class: RefCell::new(None),
-        code: runtime.get_next_object_code()
-    });
-    return Ok(Variable::Reference(obj));
-}
-
-pub fn construct_null_object_by_name(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
-    return parse_single_type_string(runtime, name, true);
-}
-
-pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
-    let debug = false;
-    runnerPrint!(runtime, debug, 3, "Constructing object {}", name);
-    try!(load_class(runtime, name));
-
-    let original_class = try!(load_class(runtime, name));
-    let mut original_obj : Option<Rc<Object>> = None;
-    let mut class = original_class.clone();
-    let mut sub_class : Option<Weak<Object>> = None;
-
-    loop {
-        runnerPrint!(runtime, debug, 3, "Constructing object of type {} with subclass {}", class.name, sub_class.is_some());
-        let mut members: HashMap<String, Variable> = HashMap::new();
-        for field in &class.cr.fields {
-            if field.access_flags & ACC_STATIC != 0 {
-                continue;
-            }
-
-            let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
-            let descriptor_string = try!(class.cr.constant_pool.get_str(field.descriptor_index));
-
-            let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
-
-            members.insert((*name_string).clone(), var);
-        }
-
-        let obj = Rc::new(Object {
-            is_null: false,
-            type_ref: class.clone(),
-            members: RefCell::new(members),
-            super_class: RefCell::new(None),
-            sub_class: RefCell::new(sub_class.clone()),
-            code: runtime.get_next_object_code()
-        });
-        if original_obj.is_none() {
-            original_obj = Some(obj.clone());
-        }
-        if sub_class.is_some() {
-            let sub_class_up = sub_class.unwrap().upgrade().unwrap();
-            *sub_class_up.super_class.borrow_mut() = Some(obj.clone());
-        }
-        let maybe_super_class = class.super_class.borrow().clone();
-        if maybe_super_class.is_some() {
-            sub_class = Some(Rc::downgrade(&obj.clone()));
-            class = maybe_super_class.unwrap();
-        } else {
-            return Ok(Variable::Reference(original_obj.unwrap()));
-        }
-    }
-}
-
-// Get the (super)object which contains a field
-fn get_obj_field(mut obj: Rc<Object>, field_name: &str) -> Result<Rc<Object>, RunnerError> {
-    let class_name = obj.type_ref.name.clone();
-    while {let members = obj.members.borrow(); !members.contains_key(field_name) } {
-        let new_obj = obj.super_class.borrow().clone();
-        if new_obj.is_none() {
-            return Err(RunnerError::ClassInvalid2(format!("Couldn't find field '{}' in class {}", field_name, class_name)));
-        }
-        obj = new_obj.unwrap();
-    }
-    return Ok(obj.clone());
-}
-
-fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, RunnerError> {
-    while obj.type_ref.name != class_name && obj.super_class.borrow().is_some() {
-        let new_obj = obj.super_class.borrow().clone().unwrap();
-        obj = new_obj;
-        debugPrint!(false, 3, "Class didn't match, checking '{}' now)", obj.type_ref.name);
-    }
-
-    if obj.type_ref.name != class_name {
-        debugPrint!(true, 1, "Expected object on stack with class name '{}' but got '{}'", class_name, obj.type_ref.name);
-        return Err(RunnerError::ClassInvalid2(format!("Couldn't find object on stack with class name '{}'", class_name)));
-    }
-
-    return Ok(obj);
-}
-
-pub fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descriptor: Rc<String>, _access: u16, slot: i32)  -> Result<Variable, RunnerError> {
-    let class_name = "java/lang/reflect/Field";
-    let name_var = try!(make_string(runtime, name.as_str()));
-    let name_var_interned = try!(string_intern(runtime, &name_var));
-    let signature_var = try!(make_string(runtime, descriptor.as_str()));
-    let var = try!(construct_object(runtime, class_name));
-    try!(put_field(runtime, var.to_ref(), class_name, "name", name_var_interned));
-    try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
-    let type_obj = try!(get_class_object_from_descriptor(runtime, descriptor.as_str()));
-    try!(put_field(runtime, var.to_ref(), class_name, "type", type_obj));
-    try!(put_field(runtime, var.to_ref(), class_name, "slot", Variable::Int(slot)));
-    try!(put_field(runtime, var.to_ref(), class_name, "clazz", clazz.clone()));
-    return Ok(var);
-}
-
-pub fn make_method(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, _access: u16)  -> Result<Variable, RunnerError> {
-    let class_name = &"java/lang/reflect/Method";
-    let name_var = try!(make_string(runtime, name.as_str()));
-    let name_var_interned = try!(string_intern(runtime, &name_var));
-    let signature_var = try!(make_string(runtime, descriptor.as_str()));
-    let var = try!(construct_object(runtime, class_name));
-    try!(put_field(runtime, var.to_ref(), class_name, "name", name_var_interned));
-    try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
-    return Ok(var);
-}
-
-pub fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
-    let debug = false;
-    runnerPrint!(runtime, debug, 2, "Put Static Field {} {} {}", class_name, field_name, value);
-    let class_result = try!(load_class(runtime, class_name));
-    let mut statics = class_result.statics.borrow_mut();
-    if !statics.contains_key(field_name) {
-        return Err(RunnerError::ClassInvalid2(format!("Couldn't find static '{}' in class '{}' to put", field_name, class_name)));;
-    }
-    statics.insert(String::from(field_name), value);
-    return Ok(());
-}
-
-pub fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
-    let debug = false;
-    runnerPrint!(runtime, debug, 2, "Put Field {} {} {}", class_name, field_name, value);
-    let super_obj = try!(get_super_obj(obj, class_name));
-    let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
-    let mut members = super_obj_with_field.members.borrow_mut();
-    members.insert(String::from(field_name), value);
-    return Ok(());
-}
-
-pub fn get_field(runtime: &mut Runtime, obj: &Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
-    let debug = false;
-
-    runnerPrint!(runtime, debug, 2, "Get Field {} {} {}", *obj, class_name, field_name);
-
-    if obj.is_null {
-        let exception = try!(construct_object(runtime, &"java/lang/NullPointerException"));
-        return Err(RunnerError::Exception(exception));
-    }
-
-    let super_obj = try!(get_super_obj(obj.clone(), class_name));
-    let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
-    let mut members = super_obj_with_field.members.borrow_mut();
-
-    let unresolved_type_name;
-    {
-        let member = members.get(&*field_name).unwrap();
-        if !member.is_unresolved() {
-            return Ok(member.clone());
-        }
-        unresolved_type_name = member.get_unresolved_type_name().clone();
-    }
-
-    let var = try!(construct_null_object_by_name(runtime, unresolved_type_name.as_str()));
-    members.insert(String::from(field_name), var.clone());
-    return Ok(var);
 }
 
 

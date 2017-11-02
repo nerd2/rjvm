@@ -1,3 +1,4 @@
+use reader::jvm::construction::*;
 use reader::jvm::interpreter::*;
 use reader::runner::*;
 use std::rc::Rc;

@@ -3,6 +3,7 @@ extern crate byteorder;
 use self::byteorder::{BigEndian, ReadBytesExt};
 use reader::builtins::*;
 use reader::class_reader::*;
+use reader::jvm::construction::*;
 use reader::jvm::class_objects::*;
 use reader::runner::*;
 use reader::util::*;

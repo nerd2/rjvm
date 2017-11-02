@@ -1,3 +1,4 @@
+use reader::jvm::construction::*;
 use reader::jvm::class_objects::*;
 use reader::jvm::interpreter::*;
 use reader::runner::*;
@@ -5,6 +6,32 @@ use reader::util::*;
 use reader::class_reader::*;
 use std;
 use std::rc::Rc;
+
+fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descriptor: Rc<String>, _access: u16, slot: i32)  -> Result<Variable, RunnerError> {
+    let class_name = "java/lang/reflect/Field";
+    let name_var = try!(make_string(runtime, name.as_str()));
+    let name_var_interned = try!(string_intern(runtime, &name_var));
+    let signature_var = try!(make_string(runtime, descriptor.as_str()));
+    let var = try!(construct_object(runtime, class_name));
+    try!(put_field(runtime, var.to_ref(), class_name, "name", name_var_interned));
+    try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
+    let type_obj = try!(get_class_object_from_descriptor(runtime, descriptor.as_str()));
+    try!(put_field(runtime, var.to_ref(), class_name, "type", type_obj));
+    try!(put_field(runtime, var.to_ref(), class_name, "slot", Variable::Int(slot)));
+    try!(put_field(runtime, var.to_ref(), class_name, "clazz", clazz.clone()));
+    return Ok(var);
+}
+
+fn make_method(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, _access: u16)  -> Result<Variable, RunnerError> {
+    let class_name = &"java/lang/reflect/Method";
+    let name_var = try!(make_string(runtime, name.as_str()));
+    let name_var_interned = try!(string_intern(runtime, &name_var));
+    let signature_var = try!(make_string(runtime, descriptor.as_str()));
+    let var = try!(construct_object(runtime, class_name));
+    try!(put_field(runtime, var.to_ref(), class_name, "name", name_var_interned));
+    try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
+    return Ok(var);
+}
 
 pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, runtime: &mut Runtime) -> Result<bool, RunnerError> {
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
