@@ -7,12 +7,12 @@ unused_variables,
 
 extern crate byteorder;
 
+pub use reader::types::constant_pool::*;
 use std::char;
 use std::path::Path;
 use std::fs::File;
 use std::str;
 use std::mem::transmute;
-use std::collections::HashMap;
 use std::io;
 use std::io::Read;
 use std::io::BufReader;
@@ -116,7 +116,7 @@ impl FieldItem {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClassResult {
-    pub constant_pool: HashMap<u16, ConstantPoolItem>,
+    pub constant_pool: ConstantPool,
     pub access_flags: u16,
     pub this_class_index: u16,
     pub super_class_index: u16,
@@ -131,7 +131,7 @@ pub struct ClassResult {
 impl ClassResult {
     pub fn new() -> ClassResult {
         ClassResult {
-            constant_pool: HashMap::new(),
+            constant_pool: ConstantPool::new(),
             access_flags: 0,
             this_class_index: 0,
             super_class_index: 0,
@@ -144,7 +144,7 @@ impl ClassResult {
         }
     }
     pub fn name(&self) -> Result<Rc<String>, ClassReadError> {
-        return get_cp_class_name(&self.constant_pool, self.this_class_index);
+        return self.constant_pool.get_class_name(self.this_class_index);
     }
 }
 
@@ -172,46 +172,10 @@ fn read_exception(reader: &mut Read) -> Result<ExceptionItem, ClassReadError> {
     return Ok(ExceptionItem {start_pc: start_pc, end_pc: end_pc, handler_pc: handler_pc, catch_type: catch_type});
 }
 
-pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, ClassReadError> {
-    let maybe_cp_entry = cp.get(&index);
-    if maybe_cp_entry.is_none() {
-        debugPrint!(true, 2, "Constant pool item at index {} is not present", index);
-        return Err(ClassReadError::Parse);
-    } else {
-        match *maybe_cp_entry.unwrap() {
-            ConstantPoolItem::CONSTANT_Utf8(ref s) => {
-                return Ok(s.clone());
-            }
-            _ => {
-                debugPrint!(true, 2, "Constant pool item at index {} is not UTF8, actually {:?}", index, maybe_cp_entry.unwrap());
-                return Err(ClassReadError::Parse);
-            }
-        }
-    }
-}
-
-pub fn get_cp_class_name(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, ClassReadError> {
-    let maybe_cp_entry = cp.get(&index);
-    if maybe_cp_entry.is_none() {
-        debugPrint!(true, 4, "Constant pool item at index {} does not exist", index);
-        return Err(ClassReadError::Parse);
-    } else {
-        match *maybe_cp_entry.unwrap() {
-            ConstantPoolItem::CONSTANT_Class {index: name_index} => {
-                return get_cp_str(cp, name_index);
-            }
-            _ => {
-                debugPrint!(true, 4, "Constant pool item at index {} is not a class, actually {:?}", index, maybe_cp_entry.unwrap());
-                return Err(ClassReadError::Parse);
-            }
-        }
-    }
-}
-
-fn read_attribute(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Result<AttributeItem, ClassReadError> {
+fn read_attribute(cp: &ConstantPool, reader: &mut Read) -> Result<AttributeItem, ClassReadError> {
     let name_index = try!(reader.read_u16::<BigEndian>());
     let length = try!(reader.read_u32::<BigEndian>());
-    let attribute_name = try!(get_cp_str(cp, name_index));
+    let attribute_name = try!(cp.get_str(name_index));
     match attribute_name.as_str() {
         "ConstantValue" => {
             if length != 2 {
@@ -274,13 +238,13 @@ fn read_attribute(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Res
     }
 }
 
-fn read_field(cp: &HashMap<u16, ConstantPoolItem>, reader: &mut Read) -> Result<FieldItem, ClassReadError> {
+fn read_field(cp: &ConstantPool, reader: &mut Read) -> Result<FieldItem, ClassReadError> {
     let mut field = FieldItem::new();
     field.access_flags = try!(reader.read_u16::<BigEndian>());
     field.name_index = try!(reader.read_u16::<BigEndian>());
     field.descriptor_index = try!(reader.read_u16::<BigEndian>());
 
-    debugPrint!(true, 4, "Field with name {} descriptor index {}", try!(get_cp_str(cp, field.name_index)), field.descriptor_index);
+    debugPrint!(true, 4, "Field with name {} descriptor index {}", try!(cp.get_str(field.name_index)), field.descriptor_index);
     let attributes_count = try!(reader.read_u16::<BigEndian>());
     debugPrint!(true, 4, "Field has {} attributes", attributes_count);
     for _ in 0..attributes_count {
@@ -456,7 +420,7 @@ fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, Clas
     while i < cp_count {
         debugPrint!(true, 5, "{}", i);
         let mut entry_count : u16 = 1;
-        ret.constant_pool.insert(i, try!(read_constant_pool(&mut reader, &mut entry_count)));
+        ret.constant_pool.pool.insert(i, try!(read_constant_pool(&mut reader, &mut entry_count)));
         i += entry_count;
     }
 
@@ -468,7 +432,7 @@ fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, Clas
 
 pub fn get_classname(filename: &Path) -> Result<String, ClassReadError> {
     let (_reader, ret) = try!(read_up_to_my_class_details(filename));
-    let class_name = try!(get_cp_class_name(&ret.constant_pool, ret.this_class_index));
+    let class_name = try!(ret.constant_pool.get_class_name(ret.this_class_index));
     return Ok((*class_name).clone());
 }
 

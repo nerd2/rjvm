@@ -13,6 +13,7 @@ pub mod reader {
         pub mod sun;
     }
     mod types {
+        pub mod constant_pool;
         pub mod frame;
         pub mod objects;
         pub mod runtime;

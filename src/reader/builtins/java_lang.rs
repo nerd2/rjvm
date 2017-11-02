@@ -76,8 +76,8 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let mut index = 0;
             for field in &class.cr.fields {
                 if !public_only || (field.access_flags & ACC_PUBLIC != 0) {
-                    let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-                    let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+                    let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
+                    let descriptor_string = try!(class.cr.constant_pool.get_str(field.descriptor_index));
                     let field_object = try!(make_field(runtime, &args[0], name_string, descriptor_string, field.access_flags, index));
                     field_objects.push(field_object);
                 }
@@ -98,8 +98,8 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
                     continue;
                 }
 
-                let name_string = try!(get_cp_str(&class.cr.constant_pool, method.name_index));
-                let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, method.descriptor_index));
+                let name_string = try!(class.cr.constant_pool.get_str(method.name_index));
+                let descriptor_string = try!(class.cr.constant_pool.get_str(method.descriptor_index));
                 let methods_object = try!(make_method(runtime, name_string, descriptor_string, method.access_flags));
                 method_objects.push(methods_object);
             }

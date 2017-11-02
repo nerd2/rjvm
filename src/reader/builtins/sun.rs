@@ -1,4 +1,3 @@
-use reader::class_reader::*;
 use reader::runner::*;
 use reader::util::*;
 use std::rc::Rc;
@@ -37,7 +36,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let class = args[1].clone().to_ref_type();
 
             let field = &class.cr.fields[offset as usize];
-            let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
+            let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
             let mut members = obj.members.borrow_mut();
             let current = members.get(&*name_string).unwrap().to_ref().clone();
             runnerPrint!(runtime, true, 2, "BUILTIN: compareAndSwapObject {} {} {} {} {}", obj, offset, current, expected, swap);

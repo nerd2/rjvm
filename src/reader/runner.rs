@@ -77,73 +77,6 @@ impl From<ClassReadError> for RunnerError {
     }
 }
 
-fn get_cp_name_and_type(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(Rc<String>, Rc<String>), RunnerError> {
-    debugPrint!(false, 5, "{}", index);
-
-    let maybe_cp_entry = constant_pool.get(&index);
-    if maybe_cp_entry.is_none() {
-        debugPrint!(true, 1, "Missing CP name & type {}", index);
-        return Err(RunnerError::ClassInvalid2(format!("Missing CP name & type {}", index)));
-    } else {
-        match *maybe_cp_entry.unwrap() {
-            ConstantPoolItem::CONSTANT_NameAndType {name_index, descriptor_index} => {
-                debugPrint!(false, 4, "name_index: {}, descriptor_index: {}", name_index, descriptor_index);
-
-                let name_str = try!(get_cp_str(&constant_pool, name_index));
-                let type_str = try!(get_cp_str(&constant_pool, descriptor_index));
-                return Ok((name_str, type_str));
-            }
-            _ => {
-                return Err(RunnerError::ClassInvalid2(format!("Index {} is not a name and type", index)));
-            }
-        }
-    }
-}
-
-fn get_cp_field(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(Rc<String>, Rc<String>, Rc<String>), RunnerError> {
-    debugPrint!(false, 5, "{}", index);
-    let maybe_cp_entry = constant_pool.get(&index);
-    if maybe_cp_entry.is_none() {
-        return Err(RunnerError::ClassInvalid2(format!( "Missing CP field {}", index)));
-    } else {
-        match *maybe_cp_entry.unwrap() {
-            ConstantPoolItem::CONSTANT_Fieldref{class_index, name_and_type_index} => {
-                let class_str = try!(get_cp_class_name(constant_pool, class_index));
-                let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
-                return Ok((class_str, name_str, type_str));
-            }
-            _ => {
-                return Err(RunnerError::ClassInvalid2(format!("Index {} is not a field {:?}", index, *maybe_cp_entry.unwrap())));
-            }
-        }
-    }
-}
-
-fn get_cp_method(constant_pool: &HashMap<u16, ConstantPoolItem>, index: u16) -> Result<(Rc<String>, Rc<String>, Rc<String>), RunnerError> {
-    debugPrint!(false, 5, "{}", index);
-    let maybe_cp_entry = constant_pool.get(&index);
-    if maybe_cp_entry.is_none() {
-        debugPrint!(true, 1, "Missing CP method {}", index);
-        return Err(RunnerError::ClassInvalid2(format!("Missing CP method {}", index)));
-    } else {
-        match *maybe_cp_entry.unwrap() {
-            ConstantPoolItem::CONSTANT_Methodref {class_index, name_and_type_index} => {
-                let class_str = try!(get_cp_class_name(constant_pool, class_index));
-                let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
-                return Ok((class_str, name_str, type_str));
-            }
-            ConstantPoolItem::CONSTANT_InterfaceMethodref {class_index, name_and_type_index} => {
-                let class_str = try!(get_cp_class_name(constant_pool, class_index));
-                let (name_str, type_str) = try!(get_cp_name_and_type(constant_pool, name_and_type_index));
-                return Ok((class_str, name_str, type_str));
-            }
-            _ => {
-                return Err(RunnerError::ClassInvalid2(format!("Index {} is not a method", index)));
-            }
-        }
-    }
-}
-
 fn get_most_sub_class(mut obj: Rc<Object>) -> Rc<Object>{
     // Go to top of chain
     while obj.sub_class.borrow().is_some() {
@@ -235,8 +168,8 @@ pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, R
                 continue;
             }
 
-            let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-            let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+            let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
+            let descriptor_string = try!(class.cr.constant_pool.get_str(field.descriptor_index));
 
             let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
 
@@ -270,12 +203,12 @@ pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, R
 
 fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_descriptor: &str) -> Result<Code, RunnerError> {
     let debug = false;
-    let class_name = try!(get_cp_class_name(&class.constant_pool, class.this_class_index));
+    let class_name = try!(class.constant_pool.get_class_name(class.this_class_index));
     let mut method_res: Result<&FieldItem, RunnerError> = Err(RunnerError::ClassInvalid2(format!("Could not find method {} with descriptor {} in class {}", target_method_name, target_descriptor, class_name)));
 
     for method in &class.methods {
-        let method_name = try!(get_cp_str(&class.constant_pool, method.name_index));
-        let descriptor = try!(get_cp_str(&class.constant_pool, method.descriptor_index));
+        let method_name = try!(class.constant_pool.get_str(method.name_index));
+        let descriptor = try!(class.constant_pool.get_str(method.descriptor_index));
         debugPrint!(debug, 3, "Checking method {} {}", method_name, descriptor);
         if method_name.as_str() == target_method_name &&
             descriptor.as_str() == target_descriptor {
@@ -489,7 +422,7 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
     let current_op_stack_size = runtime.current_frame.operand_stack.len();
 
     {
-        let (class_name, method_name, descriptor) = try!(get_cp_method(&runtime.current_frame.constant_pool, index));
+        let (class_name, method_name, descriptor) = try!(runtime.current_frame.constant_pool.get_method(index));
         new_method_name = Some((*class_name).clone() + "/" + method_name.as_str());
         let (parameters, _return_type) = try!(parse_function_type_string(runtime, descriptor.as_str()));
         let extra_parameter = if with_obj {1} else {0};
@@ -811,20 +744,20 @@ fn ifacmp(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, should_
 }
 
 fn ldc(runtime: &mut Runtime, index: usize) -> Result<(), RunnerError> {
-    let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
+    let maybe_cp_entry = runtime.current_frame.constant_pool.pool.get(&(index as u16)).map(|x| x.clone());
     if maybe_cp_entry.is_none() {
         runnerPrint!(runtime, true, 1, "LDC failed at index {}", index);
         return Err(RunnerError::ClassInvalid2(format!("LDC failed at index {}", index)));
     } else {
         match maybe_cp_entry.as_ref().unwrap() {
             &ConstantPoolItem::CONSTANT_String { index } => {
-                let str = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                let str = try!(runtime.current_frame.constant_pool.get_str(index));
                 runnerPrint!(runtime, true, 2, "LDC string {}", str);
                 let var = try!(make_string(runtime, str.as_str()));
                 runtime.push_on_stack(var);
             }
             &ConstantPoolItem::CONSTANT_Class { index } => {
-                let constant_pool_descriptor = try!(get_cp_str(&runtime.current_frame.constant_pool, index));
+                let constant_pool_descriptor = try!(runtime.current_frame.constant_pool.get_str(index));
                 // Class descriptors are either:
                 // "ClassName"
                 // or
@@ -904,7 +837,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         20 => { // LDC2W
             let index = try!(buf.read_u16::<BigEndian>());
-            let maybe_cp_entry = runtime.current_frame.constant_pool.get(&(index as u16)).map(|x| x.clone());
+            let maybe_cp_entry = runtime.current_frame.constant_pool.pool.get(&(index as u16)).map(|x| x.clone());
             if maybe_cp_entry.is_none() {
                 runnerPrint!(runtime, true, 1, "LDC2W failed at index {}", index);
                 return Err(RunnerError::ClassInvalid2(format!("LDC2W failed at index {}", index)));
@@ -1152,7 +1085,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         178 => { // getstatic
             let index = try!(buf.read_u16::<BigEndian>());
-            let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, index));
+            let (class_name, field_name, typ) = try!(runtime.current_frame.constant_pool.get_field(index));
             runnerPrint!(runtime, true, 2, "GETSTATIC {} {} {}", class_name, field_name, typ);
             let mut class_result = try!(load_class(runtime, class_name.as_str()));
             loop {
@@ -1175,13 +1108,13 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         179 => { // putstatic
             let index = try!(buf.read_u16::<BigEndian>());
             let value = runtime.pop_from_stack().unwrap();
-            let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, index));
+            let (class_name, field_name, typ) = try!(runtime.current_frame.constant_pool.get_field(index));
             runnerPrint!(runtime, true, 2, "PUTSTATIC {} {} {} {}", class_name, field_name, typ, value);
             try!(put_static(runtime, class_name.as_str(), field_name.as_str(), value));
         }
         180 => {
             let field_index = try!(buf.read_u16::<BigEndian>());
-            let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
+            let (class_name, field_name, typ) = try!(runtime.current_frame.constant_pool.get_field(field_index));
             let var = runtime.pop_from_stack().unwrap();
             let obj = var.to_ref();
             let f = try!(get_field(runtime, &obj, class_name.as_str(), field_name.as_str()));
@@ -1190,7 +1123,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         181 => {
             let field_index = try!(buf.read_u16::<BigEndian>());
-            let (class_name, field_name, typ) = try!(get_cp_field(&runtime.current_frame.constant_pool, field_index));
+            let (class_name, field_name, typ) = try!(runtime.current_frame.constant_pool.get_field(field_index));
             let value = runtime.pop_from_stack().unwrap();
             let var = runtime.pop_from_stack().unwrap();
             let obj = var.to_ref();
@@ -1217,7 +1150,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         187 => {
             let index = try!(buf.read_u16::<BigEndian>());
-            let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, index));
+            let class_name = try!(runtime.current_frame.constant_pool.get_class_name(index));
             runnerPrint!(runtime, true, 2, "NEW {}", class_name);
             let var = try!(construct_object(runtime, class_name.as_str()));
             runtime.push_on_stack(var);
@@ -1250,7 +1183,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         }
         189 => {
             let index = try!(buf.read_u16::<BigEndian>());
-            let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, index));
+            let class_name = try!(runtime.current_frame.constant_pool.get_class_name(index));
             try!(load_class(runtime, class_name.as_str()));
             let class = runtime.classes.get(&*class_name).unwrap().clone();
             let count = try!(runtime.pop_from_stack().ok_or(RunnerError::ClassInvalid("ANEWARRAY count fail"))).to_int();
@@ -1279,12 +1212,9 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
 
             runnerPrint!(runtime, true, 2, "CHECKCAST {} {}", var, index);
 
-            {
-                let maybe_cp_entry = runtime.current_frame.constant_pool.get(&index);
-                if maybe_cp_entry.is_none() {
-                    runnerPrint!(runtime, true, 1, "Missing CP class {}", index);
-                    return Err(RunnerError::ClassInvalid2(format!("Missing CP class {}", index)));
-                }
+            if runtime.current_frame.constant_pool.get_class_name(index).is_err() {
+                runnerPrint!(runtime, true, 1, "Missing CP class {}", index);
+                return Err(RunnerError::ClassInvalid2(format!("Missing CP class {}", index)));
             }
 
             // TODO: CHECKCAST (noop)
@@ -1293,7 +1223,7 @@ fn instruction(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) ->
         193 => {
             let var = runtime.pop_from_stack().unwrap();
             let index = try!(buf.read_u16::<BigEndian>());
-            let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, index));
+            let class_name = try!(runtime.current_frame.constant_pool.get_class_name(index));
 
             runnerPrint!(runtime, true, 2, "INSTANCEOF {} {}", var, class_name);
 
@@ -1356,7 +1286,7 @@ fn do_run_method(runtime: &mut Runtime) -> Result<(), RunnerError> {
                         for e in &runtime.current_frame.code.exceptions.clone() {
                             if current_position >= e.start_pc as u64 && current_position <= e.end_pc as u64 {
                                 if e.catch_type > 0 {
-                                    let class_name = try!(get_cp_class_name(&runtime.current_frame.constant_pool, e.catch_type));
+                                    let class_name = try!(runtime.current_frame.constant_pool.get_class_name(e.catch_type));
                                     if exception.to_ref().type_ref.name != *class_name {
                                         continue;
                                     }
@@ -1499,8 +1429,8 @@ fn initialise_class_stage_1(runtime: &mut Runtime, mut class: Rc<Class>) -> Resu
                 continue;
             }
 
-            let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-            let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
+            let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
+            let descriptor_string = try!(class.cr.constant_pool.get_str(field.descriptor_index));
 
             runnerPrint!(runtime, debug, 3, "Constructing class static member {} {}", name_string, descriptor_string);
 
@@ -1513,7 +1443,7 @@ fn initialise_class_stage_1(runtime: &mut Runtime, mut class: Rc<Class>) -> Resu
 
         let super_class_name =
             if class.cr.super_class_index > 0 {
-                (*try!(get_cp_class_name(&class.cr.constant_pool, class.cr.super_class_index))).clone()
+                (*try!(class.cr.constant_pool.get_class_name(class.cr.super_class_index))).clone()
             } else if class.name != "java/lang/Object" {
                 String::from("java/lang/Object")
             } else {
