@@ -4,7 +4,12 @@ use std::path::Path;
 pub mod reader {
     #[macro_use]
     pub mod class;
+    #[macro_use]
     pub mod runner;
+    mod util;
+    mod builtins {
+        pub mod java_lang;
+    }
 }
 
 fn get_class_paths() -> Vec<String> {

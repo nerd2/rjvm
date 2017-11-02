@@ -9,7 +9,9 @@
 
 extern crate byteorder;
 extern crate rand;
+use reader::builtins::*;
 use reader::class::*;
+use reader::util::*;
 use std;
 use std::collections::HashMap;
 use std::cell::RefCell;
@@ -48,12 +50,12 @@ pub enum RunnerError {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Class {
-    name: String,
-    cr: ClassResult,
-    initialising: RefCell<bool>,
-    initialised: RefCell<bool>,
-    statics: RefCell<HashMap<String, Variable>>,
-    super_class: RefCell<Option<Rc<Class>>>
+    pub name: String,
+    pub cr: ClassResult,
+    pub initialising: RefCell<bool>,
+    pub initialised: RefCell<bool>,
+    pub statics: RefCell<HashMap<String, Variable>>,
+    pub super_class: RefCell<Option<Rc<Class>>>
 }
 impl Class {
   pub fn new(name: &String, cr: &ClassResult) -> Class {
@@ -63,12 +65,12 @@ impl Class {
 
 #[derive(Clone, Debug)]
 pub struct Object {
-    is_null: bool,
-    type_ref: Rc<Class>,
-    members: RefCell<HashMap<String, Variable>>,
-    super_class: RefCell<Option<Rc<Object>>>,
-    sub_class: RefCell<Option<Weak<Object>>>,
-    code: i32
+    pub is_null: bool,
+    pub type_ref: Rc<Class>,
+    pub members: RefCell<HashMap<String, Variable>>,
+    pub super_class: RefCell<Option<Rc<Object>>>,
+    pub sub_class: RefCell<Option<Weak<Object>>>,
+    pub code: i32
 }
 
 impl fmt::Display for Object {
@@ -97,11 +99,11 @@ impl PartialEq for Object { // Have to implement PartialEq because not derrivabl
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ArrayObject { // Can be either typed or primitive array (including nested)
-    is_null: bool,
-    element_type_ref: Option<Rc<Class>>,
-    element_type_str: String,
-    elements: RefCell<Vec<Variable>>,
-    code: i32,
+    pub is_null: bool,
+    pub element_type_ref: Option<Rc<Class>>,
+    pub element_type_str: String,
+    pub elements: RefCell<Vec<Variable>>,
+    pub code: i32,
 }
 
 impl fmt::Display for ArrayObject {
@@ -403,14 +405,14 @@ impl fmt::Display for Variable {
 }
 
 #[derive(Clone, Debug)]
-struct Frame {
-    class: Option<Rc<Class>>,
-    constant_pool: HashMap<u16, ConstantPoolItem>,
-    local_variables: Vec<Variable>,
-    operand_stack: Vec<Variable>,
-    return_pos: u64,
-    code: Code,
-    name: String
+pub struct Frame {
+    pub class: Option<Rc<Class>>,
+    pub constant_pool: HashMap<u16, ConstantPoolItem>,
+    pub local_variables: Vec<Variable>,
+    pub operand_stack: Vec<Variable>,
+    pub return_pos: u64,
+    pub code: Code,
+    pub name: String
 }
 impl Frame {
     pub fn new() -> Frame {
@@ -426,16 +428,16 @@ impl Frame {
 }
 
 pub struct Runtime {
-    previous_frames: Vec<Frame>,
-    current_frame: Frame,
-    class_paths: Vec<String>,
-    classes: HashMap<String, Rc<Class>>,
-    count: i64,
-    current_thread: Option<Variable>,
-    string_interns: HashMap<String, Variable>,
-    properties: HashMap<String, Variable>,
-    class_objects: HashMap<String, Variable>,
-    object_count: i32,
+    pub previous_frames: Vec<Frame>,
+    pub current_frame: Frame,
+    pub class_paths: Vec<String>,
+    pub classes: HashMap<String, Rc<Class>>,
+    pub count: i64,
+    pub current_thread: Option<Variable>,
+    pub string_interns: HashMap<String, Variable>,
+    pub properties: HashMap<String, Variable>,
+    pub class_objects: HashMap<String, Variable>,
+    pub object_count: i32,
 }
 impl Runtime {
     fn  new(class_paths: Vec<String>) -> Runtime {
@@ -474,25 +476,6 @@ impl From<ClassReadError> for RunnerError {
     fn from(err: ClassReadError) -> RunnerError {
         RunnerError::ClassInvalid2(format!("{:?}", err))
     }
-}
-
-fn type_name_to_descriptor(name: &String) -> String {
-    return String::from(match name.as_str() {
-        "byte" => "B",
-        "char" => "C",
-        "double" => "D",
-        "float" => "F",
-        "int" => "I",
-        "long" => "J",
-        "short" => "S",
-        "boolean" => "Z",
-        _ => {
-            let mut ret = String::from("L");
-            ret.push_str(name.as_str());
-            ret.push(';');
-            return ret;
-        }
-    });
 }
 
 fn descriptor_to_type_name(string: &str) -> Result<String, RunnerError> {
@@ -540,7 +523,7 @@ fn descriptor_to_type_name(string: &str) -> Result<String, RunnerError> {
     return Ok(ret);
 }
 
-fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, RunnerError> {
+pub fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, RunnerError> {
     let maybe_cp_entry = constant_pool.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 1, "Missing CP string {}", index);
@@ -556,13 +539,6 @@ fn get_cp_str(constant_pool: &HashMap<u16, ConstantPoolItem>, index:u16) -> Resu
             }
         }
     }
-}
-
-fn push_on_stack(operand_stack: &mut Vec<Variable>, var: Variable) {
-    if !var.is_type_1() {
-        operand_stack.push(var.clone());
-    }
-    operand_stack.push(var);
 }
 
 fn pop_from_stack(operand_stack: &mut Vec<Variable>) -> Option<Variable> {
@@ -674,8 +650,7 @@ fn initialise_variable(runtime: &mut Runtime, descriptor_string: &str) -> Result
     return Ok(variable);
 }
 
-
-fn construct_char_array(runtime: &mut Runtime, s: &str) -> Variable {
+pub fn construct_char_array(runtime: &mut Runtime, s: &str) -> Variable {
     let mut v : Vec<Variable> = Vec::new();
     for c in s.chars() {
         v.push(Variable::Char(c));
@@ -690,7 +665,7 @@ fn construct_char_array(runtime: &mut Runtime, s: &str) -> Variable {
     return Variable::ArrayReference(Rc::new(array_object));
 }
 
-fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
+pub fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
     let array_object = ArrayObject {
         is_null: data.is_none(),
         element_type_ref: Some(class.clone()),
@@ -701,7 +676,7 @@ fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Option<Vec<Var
     return Ok(Variable::ArrayReference(Rc::new(array_object)));
 }
 
-fn construct_array_by_name(runtime: &mut Runtime, name: &str, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
+pub fn construct_array_by_name(runtime: &mut Runtime, name: &str, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
     let class = try!(load_class(runtime, name));
     return construct_array(runtime, class, data);
 }
@@ -730,11 +705,11 @@ fn construct_null_object(runtime: &mut Runtime, class: Rc<Class>) -> Result<Vari
     return Ok(Variable::Reference(obj));
 }
 
-fn construct_null_object_by_name(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
+pub fn construct_null_object_by_name(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
     return parse_single_type_string(runtime, name, true);
 }
 
-fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
+pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
     let debug = false;
     runnerPrint!(runtime, debug, 3, "Constructing object {}", name);
     try!(load_class(runtime, name));
@@ -814,42 +789,6 @@ fn get_class_method_code(class: &ClassResult, target_method_name: &str, target_d
             .nth(0).ok_or(RunnerError::ClassInvalid("Class method has no code")));
         return Ok(code.clone());
     }
-}
-
-fn extract_from_char_array(runtime: &mut Runtime, var: &Variable) -> Result<String, RunnerError> {
-    let array = var.to_arrayobj();
-    if array.is_null {
-        let exception = try!(construct_object(runtime, &"java/lang/NullPointerException"));
-        return Err(RunnerError::Exception(exception));
-    } else {
-        let mut res = String::new();
-        for c in array.elements.borrow().iter() {
-            res.push(c.to_char());
-        }
-        return Ok(res);
-    }
-}
-
-fn extract_from_string(runtime: &mut Runtime, obj: &Rc<Object>) -> Result<String, RunnerError> {
-    let field = try!(get_field(runtime, obj, "java/lang/String", "value"));
-    let string = try!(extract_from_char_array(runtime, &field));
-    return Ok(string);
-}
-
-
-fn string_to_string(obj: &Object) -> String {
-    let members = obj.members.borrow();
-    let value_array = members.get(&String::from("value"));
-    if value_array.is_none() { return String::from("");}
-    let array = value_array.unwrap().to_arrayobj();
-    if array.is_null { return String::from("");}
-    let vec = array.elements.borrow();
-    let mut ret = String::new();
-    for v in vec.iter() {
-        ret.push(v.to_char());
-    }
-
-    return ret;
 }
 
 fn load<F>(desc: &str, index: u8, runtime: &mut Runtime, _t: F) -> Result<(), RunnerError> { // TODO: Type checking
@@ -994,7 +933,7 @@ fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, Ru
     return Ok(obj);
 }
 
-fn invoke_nested(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, method_name: &str, method_descriptor: &str, allow_not_found: bool) -> Result<(), RunnerError>{
+pub fn invoke_nested(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, method_name: &str, method_descriptor: &str, allow_not_found: bool) -> Result<(), RunnerError>{
     let maybe_code = get_class_method_code(&class.cr, method_name, method_descriptor);
     if maybe_code.is_err() {
         if allow_not_found { return Ok(()) }
@@ -1016,196 +955,17 @@ fn invoke_nested(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable>, m
     return do_run_method(runtime);
 }
 
-fn string_intern(runtime: &mut Runtime, var: &Variable) -> Result<Variable, RunnerError> {
-    let obj = var.to_ref();
-    let string = try!(extract_from_string(runtime, &obj));
-    if !runtime.string_interns.contains_key(&string) {
-        runtime.string_interns.insert(string.clone(), var.clone());
-    }
-    return Ok(runtime.string_interns.get(&string).unwrap().clone());
-}
 
 fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, runtime: &mut Runtime) -> Result<bool, RunnerError> {
     runnerPrint!(runtime, true, 4, "try_builtin {} {} {}", class_name, method_name, descriptor);
+    if try!(java_lang::try_builtin(class_name, method_name, descriptor, args, runtime)) {
+        return Ok((true));
+    }
+
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
         ("java/net/InetAddress", "init", "()V") => {}
         ("java/net/InetAddressImplFactory", "isIPv6Supported", "()Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
         ("java/util/concurrent/atomic/AtomicLong", "VMSupportsCS8", "()Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
-        ("java/lang/Class", "registerNatives", "()V") => {}
-        ("java/lang/Class", "isArray", "()Z") => {
-            let obj = args[0].clone().to_ref();
-            let members = obj.members.borrow();
-            let value = members.get(&String::from("__is_array")).unwrap();
-            runnerPrint!(runtime, true, 2, "BUILTIN: is_array {}", value);
-            push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
-        }
-        ("java/lang/Class", "isPrimitive", "()Z") => {
-            let obj = args[0].clone().to_ref();
-            let members = obj.members.borrow();
-            let value = members.get(&String::from("__is_primitive")).unwrap();
-            runnerPrint!(runtime, true, 2, "BUILTIN: is_primitive {}", value);
-            push_on_stack(&mut runtime.current_frame.operand_stack, value.clone());
-        }
-        ("java/lang/Class", "getPrimitiveClass", "(Ljava/lang/String;)Ljava/lang/Class;") => {
-            let obj = args[0].clone().to_ref();
-            let string = try!(extract_from_string(runtime, &obj));
-            let descriptor = type_name_to_descriptor(&string);
-            runnerPrint!(runtime, true, 2, "BUILTIN: getPrimitiveClass {} {}", string, descriptor);
-            let var = try!(get_primitive_class(runtime, descriptor));
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
-        }
-        ("java/lang/Class", "isAssignableFrom", "(Ljava/lang/Class;)Z") => {
-            let class_object_1 = args[0].clone().to_ref();
-            let mut class1 = class_object_1.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
-            let class_object_2 = args[1].clone().to_ref();
-            let class2 = class_object_2.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
-            while class1 != class2 {
-                if class1.super_class.borrow().is_none() { break; }
-                let new_class1 = class1.super_class.borrow().clone().unwrap();
-                class1 = new_class1;
-            }
-
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(class1 == class2));
-        }
-        ("java/lang/Class", "getComponentType", "()Ljava/lang/Class;") => {
-            let class_object_1 = args[0].clone().to_ref();
-            let is_array = class_object_1.members.borrow().get(&String::from("__is_array")).unwrap().to_bool();
-            if !is_array {
-                return Err(RunnerError::ClassInvalid2(format!("getComponentType on non-array {}", class_object_1)));
-            }
-            let var = class_object_1.members.borrow().get(&String::from("__componentType")).unwrap().clone();
-            runnerPrint!(runtime, true, 2, "BUILTIN: getComponentType {}", var);
-
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
-        },
-        ("java/lang/Class", "forName0", "(Ljava/lang/String;ZLjava/lang/ClassLoader;Ljava/lang/Class;)Ljava/lang/Class;") => {
-            let descriptor_string_obj = args[0].clone().to_ref();
-            let descriptor = try!(extract_from_string(runtime, &descriptor_string_obj));
-            let initialize = args[1].to_bool();
-            let ref class_loader = args[2];
-            let ref caller_class = args[3];
-            runnerPrint!(runtime, true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
-
-            let var = try!(make_class(runtime, type_name_to_descriptor(&descriptor).as_str()));
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
-        }
-        ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Boolean(false));}
-        ("java/lang/Class", "getDeclaredFields0", "(Z)[Ljava/lang/reflect/Field;") => {
-            let class_obj = args[0].to_ref();
-            let class = class_obj.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
-            let public_only = args[1].to_bool();
-
-            runnerPrint!(runtime, true, 2, "BUILTIN: getDeclaredFields0 {}", class.name);
-
-            let mut field_objects : Vec<Variable> = Vec::new();
-            let mut index = 0;
-            for field in &class.cr.fields {
-                if !public_only || (field.access_flags & ACC_PUBLIC != 0) {
-                    let name_string = try!(get_cp_str(&class.cr.constant_pool, field.name_index));
-                    let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, field.descriptor_index));
-                    let field_object = try!(make_field(runtime, &args[0], name_string, descriptor_string, field.access_flags, index));
-                    field_objects.push(field_object);
-                }
-
-                index += 1;
-            }
-            let fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", Some(field_objects)));
-            push_on_stack(&mut runtime.current_frame.operand_stack, fields_array);
-        }
-        ("java/lang/Class", "getDeclaredMethods0", "(Z)[Ljava/lang/reflect/Method;") => {
-            let class_obj = args[0].to_ref();
-            let class = class_obj.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
-            let public_only = args[1].to_bool();
-
-            let mut method_objects : Vec<Variable> = Vec::new();
-            for method in &class.cr.methods {
-                if public_only && (method.access_flags & ACC_PUBLIC == 0) {
-                    continue;
-                }
-
-                let name_string = try!(get_cp_str(&class.cr.constant_pool, method.name_index));
-                let descriptor_string = try!(get_cp_str(&class.cr.constant_pool, method.descriptor_index));
-                let methods_object = try!(make_method(runtime, name_string, descriptor_string, method.access_flags));
-                method_objects.push(methods_object);
-            }
-            let methods_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Method", Some(method_objects)));
-            push_on_stack(&mut runtime.current_frame.operand_stack, methods_array);
-        }
-        ("java/lang/System", "arraycopy", "(Ljava/lang/Object;ILjava/lang/Object;II)V") => {
-            runnerPrint!(runtime, true, 2, "BUILTIN: arrayCopy {} {} {} {} {}", args[0], args[1], args[2], args[3], args[4]);
-
-            let src = args[0].to_arrayobj();
-            let src_pos = args[1].to_int();
-            let dest = args[2].to_arrayobj();
-            let dest_pos = args[3].to_int();
-            let length = args[4].to_int();
-
-            if src.is_null || dest.is_null {
-                let exception = try!(construct_object(runtime, &"java/lang/NullPointerException"));
-                return Err(RunnerError::Exception(exception));
-            }
-
-            let src_data = src.elements.borrow();
-            let mut dest_data = dest.elements.borrow_mut();
-
-            for n in 0..length {
-                dest_data[(dest_pos + n) as usize] = src_data[(src_pos + n) as usize].clone();
-            }
-        },
-        ("java/lang/System", "registerNatives", "()V") => {},
-        ("java/lang/System", "loadLibrary", "(Ljava/lang/String;)V") => {
-            let lib_string_obj = args[0].clone().to_ref();
-            let lib = try!(extract_from_string(runtime, &lib_string_obj));
-            runnerPrint!(runtime, true, 2, "BUILTIN: loadLibrary {}", lib);
-        }
-        ("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;") => {
-            let obj = args[0].clone().to_ref();
-            let string = try!(extract_from_string(runtime, &obj));
-            if runtime.properties.contains_key(&string) {
-                runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} valid", string);
-                push_on_stack(&mut runtime.current_frame.operand_stack, runtime.properties.get(&string).unwrap().clone());
-            } else {
-                runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} NULL", string);
-                let null_string = try!(construct_null_object_by_name(runtime, "java/lang/String"));
-                push_on_stack(&mut runtime.current_frame.operand_stack, null_string);
-            }
-        },
-        ("java/lang/Runtime", "availableProcessors", "()I") => {
-            runnerPrint!(runtime, true, 2, "BUILTIN: availableProcessors");
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(1));
-        },
-        ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
-        ("java/lang/String", "intern", "()Ljava/lang/String;") => {
-            let interned = try!(string_intern(runtime, &args[0]));
-            runnerPrint!(runtime, true, 2, "BUILTIN: intern {} {:p}", args[0], &*interned.to_ref());
-            push_on_stack(&mut runtime.current_frame.operand_stack, interned);
-        },
-        ("java/lang/Float", "floatToRawIntBits", "(F)I") => {
-            let float = args[0].to_float();
-            let bits = unsafe {std::mem::transmute::<f32, u32>(float)};
-            runnerPrint!(runtime, true, 2, "BUILTIN: floatToRawIntBits {} {}", float, bits);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(bits as i32));
-        },
-        ("java/lang/Float", "intBitsToFloat", "(I)F") => {
-            let int = args[0].to_int();
-            let float = unsafe {std::mem::transmute::<i32, f32>(int)};
-            runnerPrint!(runtime, true, 2, "BUILTIN: intBitsToFloat {} {}", int, float);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Float(float));
-        },
-        ("java/lang/Double", "doubleToRawLongBits", "(D)J") => {
-            let double = args[0].to_double();
-            let bits = unsafe {std::mem::transmute::<f64, u64>(double)};
-            runnerPrint!(runtime, true, 2, "BUILTIN: doubleToRawIntBits {} {}", double, bits);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Long(bits as i64));
-        },
-        ("java/lang/Double", "longBitsToDouble", "(J)D") => {
-            let long = args[0].to_long();
-            let double = unsafe {std::mem::transmute::<i64, f64>(long)};
-            runnerPrint!(runtime, true, 2, "BUILTIN: doubleToRawIntBits {} {}", long, double);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Double(double));
-        },
-        ("java/lang/SecurityManager", "checkPermission", "(Ljava/security/Permission;)V") => {
-        },
         ("java/security/AccessController", "doPrivileged", "(Ljava/security/PrivilegedAction;)Ljava/lang/Object;") => {
             let action = args[0].clone().to_ref();
             runnerPrint!(runtime, true, 2, "BUILTIN: doPrivileged {}", action);
@@ -1215,65 +975,6 @@ fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &R
             let ret = try!(construct_null_object_by_name(runtime, &"java/security/AccessControlContext"));
             push_on_stack(&mut runtime.current_frame.operand_stack, ret);
         }
-        ("java/lang/Object", "hashCode", "()I") => {
-            let code = try!(args[0].hash_code(runtime));
-            runnerPrint!(runtime, true, 2, "BUILTIN: hashcode {}", code);
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(code));
-        },
-        ("java/lang/System", "identityHashCode", "(Ljava/lang/Object;)I") => {
-            let code = try!(args[0].hash_code(runtime));
-            runnerPrint!(runtime, true, 2, "BUILTIN: identityHashCode {}", code); // TODO test
-            push_on_stack(&mut runtime.current_frame.operand_stack, Variable::Int(code));
-        },
-        ("java/lang/Object", "getClass", "()Ljava/lang/Class;") => {
-            let ref descriptor = args[0].get_descriptor();
-            let var = try!(make_class(runtime, descriptor.as_str()));
-            runnerPrint!(runtime, true, 2, "BUILTIN: getClass {} {}", descriptor, var);
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
-        },
-        ("java/lang/ClassLoader", "registerNatives", "()V") => {},
-        ("java/lang/Thread", "registerNatives", "()V") => {},
-        ("java/lang/Thread", "isAlive", "()Z") => {
-            let obj = args[0].clone().to_ref();
-            let members = obj.members.borrow();
-            let var = members.get(&String::from("__alive")).unwrap_or(&Variable::Boolean(false)).clone();
-            runnerPrint!(runtime, true, 2, "BUILTIN: isAlive {}", var);
-            push_on_stack(&mut runtime.current_frame.operand_stack, var);
-        },
-        ("java/lang/Thread", "start0", "()V") => {
-            // TODO
-        }
-        ("java/lang/Thread", "setPriority0", "(I)V") => {
-            let obj = args[0].clone().to_ref();
-            runnerPrint!(runtime, true, 2, "BUILTIN: setPriority0 {} {}", args[0], args[1]);
-            try!(put_field(runtime, obj.clone(), &"java/lang/Thread", &"priority", args[1].clone()));
-        }
-        ("java/lang/Thread", "currentThread", "()Ljava/lang/Thread;") => {
-            runnerPrint!(runtime, true, 2, "BUILTIN: currentThread");
-            if runtime.current_thread.is_none() {
-                runnerPrint!(runtime, true, 2, "BUILTIN: currentThread - creating thread");
-                let thread_group;
-                {
-                    let var = try!(construct_object(runtime, &"java/lang/ThreadGroup"));
-                    let obj = var.to_ref();
-                    try!(invoke_nested(runtime, obj.type_ref.clone(), vec!(var.clone()), "<init>", "()V", false));
-                    thread_group = var.clone();
-                }
-
-                {
-                    let var = try!(construct_object(runtime, &"java/lang/Thread"));
-
-                    runtime.current_thread = Some(var.clone());
-                    let obj = var.to_ref();
-                    let mut members = obj.members.borrow_mut();
-                    members.insert(String::from("name"), try!(make_string(runtime, &"thread")));
-                    members.insert(String::from("priority"), Variable::Int(1));
-                    members.insert(String::from("group"), thread_group);
-                    members.insert(String::from("__alive"), Variable::Boolean(true));
-                }
-            }
-            push_on_stack(&mut runtime.current_frame.operand_stack, runtime.current_thread.as_ref().unwrap().clone());
-        },
         ("sun/misc/Unsafe", "registerNatives", "()V") => {return Ok(true)},
         ("sun/misc/Unsafe", "arrayBaseOffset", "(Ljava/lang/Class;)I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: arrayBaseOffset");
@@ -1452,15 +1153,7 @@ fn branch_if<F>(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, c
     return Ok(());
 }
 
-fn make_string(runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerError> {
-    let var = try!(construct_object(runtime, &"java/lang/String"));
-    let obj = var.to_ref();
-    let array = construct_char_array(runtime,val);
-    try!(put_field(runtime, obj, &"java/lang/String", &"value", array));
-    return Ok(var);
-}
-
-fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descriptor: Rc<String>, _access: u16, slot: i32)  -> Result<Variable, RunnerError> {
+pub fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descriptor: Rc<String>, _access: u16, slot: i32)  -> Result<Variable, RunnerError> {
     let class_name = "java/lang/reflect/Field";
     let name_var = try!(make_string(runtime, name.as_str()));
     let name_var_interned = try!(string_intern(runtime, &name_var));
@@ -1475,7 +1168,7 @@ fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descrip
     return Ok(var);
 }
 
-fn make_method(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, _access: u16)  -> Result<Variable, RunnerError> {
+pub fn make_method(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, _access: u16)  -> Result<Variable, RunnerError> {
     let class_name = &"java/lang/reflect/Method";
     let name_var = try!(make_string(runtime, name.as_str()));
     let name_var_interned = try!(string_intern(runtime, &name_var));
@@ -1486,7 +1179,7 @@ fn make_method(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, 
     return Ok(var);
 }
 
-fn get_primitive_class(runtime: &mut Runtime, descriptor: String) -> Result<Variable, RunnerError> {
+pub fn get_primitive_class(runtime: &mut Runtime, descriptor: String) -> Result<Variable, RunnerError> {
     if descriptor.len() > 1 {
         panic!("Asked to make primitive class of type '{}'", descriptor);
     }
@@ -1513,7 +1206,7 @@ fn get_primitive_class(runtime: &mut Runtime, descriptor: String) -> Result<Vari
     return Ok(var);
 }
 
-fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, RunnerError> {
+pub fn make_class(runtime: &mut Runtime, descriptor: &str) -> Result<Variable, RunnerError> {
     {
         let maybe_existing = runtime.class_objects.get(&String::from(descriptor));
         if maybe_existing.is_some() {
@@ -1574,7 +1267,7 @@ fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, value: 
     return Ok(());
 }
 
-fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+pub fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
     let debug = false;
     runnerPrint!(runtime, debug, 2, "Put Field {} {} {}", class_name, field_name, value);
     let super_obj = try!(get_super_obj(obj, class_name));
@@ -1584,7 +1277,7 @@ fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_nam
     return Ok(());
 }
 
-fn get_field(runtime: &mut Runtime, obj: &Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
+pub fn get_field(runtime: &mut Runtime, obj: &Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
     let debug = false;
 
     runnerPrint!(runtime, debug, 2, "Get Field {} {} {}", *obj, class_name, field_name);
@@ -2244,7 +1937,6 @@ fn do_run_method(runtime: &mut Runtime) -> Result<(), RunnerError> {
                         break;
                     },
                     &RunnerError::Return => {
-                        let len = runtime.previous_frames.len();
                         if runtime.previous_frames.len() < start_frames {
                             return Ok(());
                         }

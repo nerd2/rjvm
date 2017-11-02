@@ -172,7 +172,7 @@ fn read_exception(reader: &mut Read) -> Result<ExceptionItem, ClassReadError> {
     return Ok(ExceptionItem {start_pc: start_pc, end_pc: end_pc, handler_pc: handler_pc, catch_type: catch_type});
 }
 
-pub fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, ClassReadError> {
+fn get_cp_str(cp: &HashMap<u16, ConstantPoolItem>, index:u16) -> Result<Rc<String>, ClassReadError> {
     let maybe_cp_entry = cp.get(&index);
     if maybe_cp_entry.is_none() {
         debugPrint!(true, 2, "Constant pool item at index {} is not present", index);
