@@ -3,7 +3,7 @@ use std::path::Path;
 
 pub mod reader {
     #[macro_use]
-    pub mod class;
+    pub mod class_reader;
     #[macro_use]
     pub mod runner;
     mod util;
@@ -12,6 +12,9 @@ pub mod reader {
         pub mod java_other;
         pub mod sun;
     }
+    mod types {
+        pub mod variable;
+    }
 }
 
 fn get_class_paths() -> Vec<String> {
@@ -19,7 +22,7 @@ fn get_class_paths() -> Vec<String> {
 }
 
 pub fn run(filename: &Path) {
-    let class_result = reader::class::read(filename).unwrap();
+    let class_result = reader::class_reader::read(filename).unwrap();
     reader::runner::run(&get_class_paths(), &class_result).unwrap();
 }
 
@@ -33,6 +36,6 @@ pub fn get_runtime(class_paths: &Vec<String>) -> reader::runner::Runtime {
 }
 
 pub fn run_method(runtime: &mut reader::runner::Runtime, filename: &Path, method: &str, arguments: &Vec<reader::runner::Variable>, return_descriptor: &str) -> reader::runner::Variable {
-    let class_result = reader::class::read(filename).unwrap();
+    let class_result = reader::class_reader::read(filename).unwrap();
     return reader::runner::run_method(runtime, &class_result, method, arguments, String::from(return_descriptor)).unwrap();
 }

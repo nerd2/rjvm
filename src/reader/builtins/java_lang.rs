@@ -1,6 +1,6 @@
 use reader::runner::*;
 use reader::util::*;
-use reader::class::*;
+use reader::class_reader::*;
 use std;
 use std::rc::Rc;
 

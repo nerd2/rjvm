@@ -81,3 +81,22 @@ pub fn rc_ptr_eq<T: ?Sized>(this: &Rc<T>, other: &Rc<T>) -> bool
     debugPrint!(false, 2, "RC ptr eq {} {:p} {} {:p}", this, this_ptr, other, other_ptr);
     this_ptr == other_ptr
 }
+
+pub fn generate_class_descriptor(class: &Rc<Class>) -> String {
+    let mut ret = String::new();
+    ret.push('L');
+    ret.push_str(class.name.as_str());
+    ret.push(';');
+    return ret;
+}
+
+pub fn generate_method_descriptor(args: &Vec<Variable>, return_descriptor: String, is_static: bool) -> String {
+    let mut ret = String::new();
+    ret.push('(');
+    for arg in args.iter().skip(if is_static {0} else {1}) {
+        ret.push_str(arg.get_descriptor().as_str());
+    }
+    ret.push(')');
+    ret.push_str(return_descriptor.as_str());
+    return ret;
+}
