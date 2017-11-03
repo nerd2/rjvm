@@ -1,11 +1,3 @@
-#![deny(
-    non_snake_case,
-    unreachable_code,
-    unused_assignments,
-    unused_imports,
-    unused_variables,
-    unused_mut,
-)]
 
 extern crate rand;
 use reader::class_reader::*;

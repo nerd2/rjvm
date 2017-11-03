@@ -2,10 +2,10 @@
 
 extern crate rjvm;
 
-pub use self::rjvm::run_method;
-pub use self::rjvm::reader::runner::Variable;
-pub use self::rjvm::reader::runner::Runtime;
 pub use self::rjvm::get_runtime;
+pub use self::rjvm::run_method;
+pub use self::rjvm::Variable;
+pub use self::rjvm::Runtime;
 pub use std::path::{Path, PathBuf};
 
 use std::collections::hash_map::DefaultHasher;

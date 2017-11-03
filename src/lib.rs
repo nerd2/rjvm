@@ -1,23 +1,19 @@
+#![deny(
+non_snake_case,
+unreachable_code,
+unused_assignments,
+unused_imports,
+unused_variables,
+unused_mut,
+)]
+
 extern crate glob;
 use std::path::Path;
 
-pub mod reader {
-    #[macro_use]
-    pub mod class_reader;
-    #[macro_use]
-    pub mod runner;
-    mod util;
-    mod builtins;
-    mod jvm;
-    mod types {
-        pub mod class;
-        pub mod constant_pool;
-        pub mod frame;
-        pub mod objects;
-        pub mod runtime;
-        pub mod variable;
-    }
-}
+mod reader;
+
+pub use reader::runner::Runtime;
+pub use reader::runner::Variable;
 
 fn get_class_paths() -> Vec<String> {
     return vec!(String::from("./javart/"));
