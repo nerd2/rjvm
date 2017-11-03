@@ -161,7 +161,7 @@ fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special
     {
         let (class_name, method_name, descriptor) = try!(runtime.current_frame.constant_pool.get_method(index));
         new_method_name = Some((*class_name).clone() + "/" + method_name.as_str());
-        let (parameters, _return_type) = try!(parse_function_type_string(runtime, descriptor.as_str()));
+        let (parameters, _return_type) = try!(parse_function_type_descriptor(runtime, descriptor.as_str()));
         let extra_parameter = if with_obj {1} else {0};
         let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
 

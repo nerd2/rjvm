@@ -246,25 +246,23 @@ fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_res
     return Ok(core_class);
 }
 
-fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolve: bool) -> Result<(Variable, u32), RunnerError> {
-    let mut iter = string.chars();
+pub fn parse_single_type_descriptor(runtime: &mut Runtime, descriptor: &str, resolve: bool) -> Result<Variable, RunnerError> {
+    let mut iter = descriptor.chars();
 
     let mut maybe_type_specifier = iter.next();
 
     if maybe_type_specifier.is_none() {
-        runnerPrint!(runtime, true, 2, "Type specifier blank");
         return Err(RunnerError::ClassInvalid("Type specifier blank"));
     }
 
     let mut array_depth = 0;
-    while maybe_type_specifier.unwrap_or(' ') == '[' {
+    while maybe_type_specifier.map(|x| x=='[').unwrap_or(false) {
         array_depth = array_depth + 1;
         maybe_type_specifier = iter.next();
     }
 
     if maybe_type_specifier.is_none() {
-        runnerPrint!(runtime, true, 2, "Type specifier invalid {}", string);
-        return Err(RunnerError::ClassInvalid2(format!("Type specifier invalid {}", string)));
+        return Err(RunnerError::ClassInvalid2(format!("Type specifier invalid {}", descriptor)));
     }
 
     let variable;
@@ -282,7 +280,7 @@ fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolv
                 if maybe_type_specifier.unwrap() == 'L' {
                     iter.take_while(|x| *x != ';').collect()
                 } else {
-                    String::from(string)
+                    String::from(descriptor)
                 };
             if resolve {
                 let class = try!(load_class(runtime, type_string.as_str()));
@@ -298,12 +296,6 @@ fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolv
         }
     }
 
-    return Ok((variable, array_depth));
-}
-
-pub fn parse_single_type_string(runtime: &mut Runtime, type_string: &str, resolve: bool) -> Result<Variable, RunnerError> {
-    let (variable, array_depth) = try!(extract_type_info_from_descriptor(runtime, type_string, resolve));
-
     if array_depth > 0 {
         if array_depth > 1 {
             runnerPrint!(runtime, true, 1, "Warning: >1 array depth, is this right?");
@@ -311,7 +303,7 @@ pub fn parse_single_type_string(runtime: &mut Runtime, type_string: &str, resolv
         if variable.is_primitive() {
             return Ok(try!(construct_primitive_array(runtime, variable.get_descriptor().as_str(), None)));
         } else if variable.is_unresolved() {
-            return Ok(Variable::UnresolvedReference(String::from(type_string)));
+            return Ok(Variable::UnresolvedReference(String::from(descriptor)));
         } else {
             return Ok(try!(construct_array(runtime, variable.to_ref().type_ref.clone(), None)));
         }
@@ -320,22 +312,22 @@ pub fn parse_single_type_string(runtime: &mut Runtime, type_string: &str, resolv
     }
 }
 
-pub fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result<(Vec<Variable>, Option<Variable>), RunnerError> {
+pub fn parse_function_type_descriptor(runtime: &mut Runtime, descriptor: &str) -> Result<(Vec<Variable>, Option<Variable>), RunnerError> {
     let debug = false;
-    let mut iter = string.chars().peekable();
+    let mut iter = descriptor.chars().peekable();
 
-    if iter.next().unwrap_or(' ') != '(' {
-        runnerPrint!(runtime, true, 2, "Type {} invalid", string);
-        return Err(RunnerError::ClassInvalid2(format!("Type {} invalid", string)));
+    if iter.next().map(|x| x!='(').unwrap_or(true) {
+        runnerPrint!(runtime, true, 2, "Function type '{}' invalid", descriptor);
+        return Err(RunnerError::ClassInvalid2(format!("Function type {} invalid", descriptor)));
     }
 
     let mut parameters : Vec<Variable> = Vec::new();
     let mut type_char : char;
-    while {type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid2(format!("Failed to parse {}", string)))); type_char != ')'} {
+    while {type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid2(format!("Failed to parse {}", descriptor)))); type_char != ')'} {
         let mut type_string = String::new();
         while type_char == '[' {
             type_string.push(type_char);
-            type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid2(format!("Failed to parse {}", string))));
+            type_char = try!(iter.next().ok_or(RunnerError::ClassInvalid2(format!("Failed to parse {}", descriptor))));
         }
         type_string.push(type_char);
 
@@ -343,7 +335,7 @@ pub fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result
             type_string.push_str(iter.by_ref().take_while(|x| *x != ';').collect::<String>().as_str());
         }
         runnerPrint!(runtime, debug, 3, "Found parameter {}", type_string);
-        let param = try!(parse_single_type_string(runtime, type_string.as_str(), true));
+        let param = try!(parse_single_type_descriptor(runtime, type_string.as_str(), true));
         if !param.is_type_1() {
             parameters.push(param.clone());
         }
@@ -356,7 +348,7 @@ pub fn parse_function_type_string(runtime: &mut Runtime, string: &str) -> Result
     if return_type_string == "V" {
         return Ok((parameters, None));
     } else {
-        return Ok((parameters, Some(try!(parse_single_type_string(runtime, return_type_string.as_str(), true)))));
+        return Ok((parameters, Some(try!(parse_single_type_descriptor(runtime, return_type_string.as_str(), true)))));
     }
 }
 

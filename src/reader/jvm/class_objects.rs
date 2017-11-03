@@ -47,7 +47,7 @@ pub fn get_class_object_from_descriptor(runtime: &mut Runtime, descriptor: &str)
     statics.borrow_mut().insert(String::from("initted"), Variable::Boolean(true));
     let members = &var.to_ref().members;
 
-    let subtype = try!(parse_single_type_string(runtime, descriptor, false));
+    let subtype = try!(parse_single_type_descriptor(runtime, descriptor, false));
     let mut is_primitive = false;
     let mut is_array = false;
     let mut is_unresolved = false;

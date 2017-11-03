@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::rc::Weak;
 
 pub fn initialise_variable(runtime: &mut Runtime, descriptor_string: &str) -> Result<Variable, RunnerError> {
-    let variable = try!(parse_single_type_string(runtime, descriptor_string, false));
+    let variable = try!(parse_single_type_descriptor(runtime, descriptor_string, false));
     return Ok(variable);
 }
 
@@ -67,7 +67,7 @@ pub fn construct_null_object(runtime: &mut Runtime, class: Rc<Class>) -> Result<
 }
 
 pub fn construct_null_object_by_name(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
-    return parse_single_type_string(runtime, name, true);
+    return parse_single_type_descriptor(runtime, name, true);
 }
 
 pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
