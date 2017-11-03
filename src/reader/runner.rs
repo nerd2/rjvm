@@ -176,7 +176,7 @@ pub fn load_class(runtime: &mut Runtime, name: &str) -> Result<Rc<Class>, Runner
         let maybe_class = runtime.classes.get(name).map(|x| x.clone());
         if maybe_class.is_some() {
             let x = maybe_class.unwrap().clone();
-            try!(initialise_class_stage_2(runtime, &x));
+            try!(Class::initialise(runtime, &x));
             return Ok(x);
         }
     }
@@ -190,21 +190,12 @@ pub fn load_class(runtime: &mut Runtime, name: &str) -> Result<Rc<Class>, Runner
 fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError>  {
     let debug = false;
 
-    let new_class = Rc::new(Class::new(&String::from(name), class_result));
-    runtime.classes.insert(String::from(name), new_class.clone());
+    let core_class = Rc::new(Class::new(&String::from(name), class_result));
+    runtime.classes.insert(String::from(name), core_class.clone());
     runnerPrint!(runtime, debug, 1, "Bootstrapping {}", name);
-    try!(initialise_class_stage_1(runtime, new_class.clone()));
-    try!(initialise_class_stage_2(runtime, &new_class));
-    runnerPrint!(runtime, debug, 1, "Bootstrap totally complete on {}", name);
-    return Ok(new_class);
-}
-
-fn initialise_class_stage_1(runtime: &mut Runtime, mut class: Rc<Class>) -> Result<(), RunnerError> {
-    let debug = false;
-
-    runnerPrint!(runtime, debug, 2, "Initialising class stage 1 {}", class.name);
 
     // Loop down superclass chain
+    let mut class = core_class.clone();
     while !*class.initialising.borrow() && !*class.initialised.borrow() {
         // Initialise variables, refs can be unresolved
         for field in &class.cr.fields {
@@ -230,7 +221,7 @@ fn initialise_class_stage_1(runtime: &mut Runtime, mut class: Rc<Class>) -> Resu
             } else if class.name != "java/lang/Object" {
                 String::from("java/lang/Object")
             } else {
-                return Ok(());
+                break;
             };
 
         runnerPrint!(runtime, debug, 3, "Class {} has superclass {}", class.name, super_class_name);
@@ -238,7 +229,7 @@ fn initialise_class_stage_1(runtime: &mut Runtime, mut class: Rc<Class>) -> Resu
             let maybe_superclass = runtime.classes.get(&super_class_name);
             if maybe_superclass.is_some() {
                 *class.super_class.borrow_mut() = Some(maybe_superclass.unwrap().clone());
-                return Ok(());
+                break;
             }
         }
 
@@ -250,25 +241,10 @@ fn initialise_class_stage_1(runtime: &mut Runtime, mut class: Rc<Class>) -> Resu
 
         class = new_class;
     }
-
-    return Ok(());
+    try!(Class::initialise(runtime, &core_class));
+    runnerPrint!(runtime, debug, 1, "Bootstrap totally complete on {}", name);
+    return Ok(core_class);
 }
-
-fn initialise_class_stage_2(runtime: &mut Runtime, class: &Rc<Class>) -> Result<(), RunnerError> {
-    let debug = false;
-
-    if *class.initialising.borrow() || *class.initialised.borrow() {
-        return Ok(());
-    }
-    runnerPrint!(runtime, debug, 2, "Initialising class stage 2 {}", class.name);
-    *class.initialising.borrow_mut() = true;
-    try!(invoke_nested(runtime, class.clone(), Vec::new(), "<clinit>", "()V", true));
-    *class.initialised.borrow_mut() = true;
-    runnerPrint!(runtime, debug, 2, "Class '{}' stage 2 init complete", class.name);
-
-    return Ok(());
-}
-
 
 fn extract_type_info_from_descriptor(runtime: &mut Runtime, string: &str, resolve: bool) -> Result<(Variable, u32), RunnerError> {
     let mut iter = string.chars();
