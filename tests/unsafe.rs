@@ -138,3 +138,22 @@ pub fn unsafe_get_volatile() {
     "##);
     assert_eq!(void_long_call(&mut runtime, class_path.as_path(), "get"), 0x87654321);
 }
+
+
+#[test]
+pub fn unsafe_allocate() {
+    let (mut runtime, class_path) = setup("unsafe_allocate", r##"
+        import sun.misc.Unsafe;
+
+        public class unsafe_allocate {
+            public static int get() {
+                long mem = Unsafe.getUnsafe().allocateMemory(100);
+                Unsafe.getUnsafe().putLong(mem + 8, 0x0102030405060708L);
+                int ret = Unsafe.getUnsafe().getByte(mem + 10);
+                Unsafe.getUnsafe().freeMemory(mem);
+                return ret;
+            }
+        }
+    "##);
+    assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "get"), 0x06);
+}

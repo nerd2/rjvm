@@ -45,6 +45,17 @@ fn compare_and_swap<F, G>(runtime: &mut Runtime, args: &Vec<Variable>, desc: &st
     return Ok(());
 }
 
+fn allocate(count: usize) -> *const u8 {
+    let mut v = Vec::with_capacity(count);
+    let ptr = v.as_mut_ptr();
+    std::mem::forget(v);
+    ptr
+}
+
+fn deallocate(ptr: *mut u8, count: usize) {
+    unsafe {std::mem::drop(Vec::from_raw_parts(ptr, 0, count)) };
+}
+
 pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, runtime: &mut Runtime) -> Result<bool, RunnerError> {
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
         ("sun/misc/Unsafe", "registerNatives", "()V") => {return Ok(true)},
@@ -70,6 +81,32 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("sun/misc/Unsafe", "pageSize", "()I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: pageSize");
             runtime.push_on_stack(Variable::Int(4096));
+        },
+        ("sun/misc/Unsafe", "allocateMemory", "(J)J") => {
+            let size = args[1].to_long();
+            runnerPrint!(runtime, true, 2, "BUILTIN: allocateMemory {}", size);
+            // TODO: abstract these memory allocations so everything is SAFE? Or continue to allow java to have raw memory access.
+            let ptr = allocate(size as usize + 8);
+            unsafe { *(ptr as *mut i64) = size; }
+            runtime.push_on_stack(Variable::Long(ptr as i64 + 8));
+        },
+        ("sun/misc/Unsafe", "freeMemory", "(J)V") => {
+            let ptr = args[1].to_long() - 8;
+            let size = unsafe {*(ptr as *mut i64)} as usize;
+            runnerPrint!(runtime, true, 2, "BUILTIN: freeMemory {} {}", ptr, size);
+            deallocate(ptr as *const usize as *const _ as *mut _, size);
+        },
+        ("sun/misc/Unsafe", "putLong", "(JJ)V") => {
+            let ptr = args[1].to_long();
+            let value = args[3].to_long();
+            runnerPrint!(runtime, true, 2, "BUILTIN: putLong {} {}", ptr, value);
+            unsafe { *(ptr as *mut u64) = value as u64; }
+        },
+        ("sun/misc/Unsafe", "getByte", "(J)B") => {
+            let ptr = args[1].to_long();
+            let byte = unsafe { *(ptr as *mut u8) };
+            runnerPrint!(runtime, true, 2, "BUILTIN: getByte {} {}", ptr, byte);
+            runtime.push_on_stack(Variable::Byte(byte));
         },
         ("sun/misc/Unsafe", "getObjectVolatile", "(Ljava/lang/Object;J)Ljava/lang/Object;") => { try!(get_at_index(runtime, args, "getObjectVolatile", Variable::to_ref)); }
         ("sun/misc/Unsafe", "getIntVolatile", "(Ljava/lang/Object;J)I") => { try!(get_at_index(runtime, args, "getIntVolatile", Variable::to_int)); }
