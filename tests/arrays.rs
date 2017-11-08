@@ -23,7 +23,7 @@ fn arrays() {
                 return (compareArrays(b, b) ? 8 : 0) | (compareArrays(b, a) ? 4 : 0) | (compareArrays(a, a) ? 2 : 0) | (compareArrays(a, b) ? 1 : 0);
             }
         }
-    "##);
+    "##, false);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "arrayReturningFunctionTest"), 12);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "arrayComparison"), 10);
 }

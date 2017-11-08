@@ -72,7 +72,7 @@ fn hash() {
                 return e.hashCode();
             }
         }
-    "##);
+    "##, false);
     let hashes = vec!(
         int_int_call(&mut runtime, class_path.as_path(), "hashA", 1),
         int_int_call(&mut runtime, class_path.as_path(), "hashA", 2),

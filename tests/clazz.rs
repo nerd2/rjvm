@@ -24,7 +24,7 @@ fn class_get_declared() {
                 return Unsafe.getUnsafe().objectFieldOffset(clazz.class.getDeclaredFields()[0]) != Unsafe.getUnsafe().objectFieldOffset(clazz.class.getDeclaredFields()[1]);
             }
         }
-    "##);
+    "##, true);
     assert_eq!(void_bool_call(&mut runtime, class_path.as_path(), "checkSlots"), true);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "getNumberOfFields"), 0x2);
     assert_eq!(void_str_call(&mut runtime, class_path.as_path(), "getNameOfFirstField"), "x");

@@ -64,7 +64,7 @@ pub fn unsafe_compare_and_swap() {
                 return c.l;
             }
         }
-    "##);
+    "##, true);
     assert_eq!(bool3_bool_call(&mut runtime, class_path.as_path(), "compareAndSwapObject", false, false, true), false);
     assert_eq!(bool3_bool_call(&mut runtime, class_path.as_path(), "compareAndSwapObject", true, false, false), false);
     assert_eq!(bool3_bool_call(&mut runtime, class_path.as_path(), "compareAndSwapObject", true, true, false), true);
@@ -135,7 +135,7 @@ pub fn unsafe_get_volatile() {
                     (((B)(Unsafe.getUnsafe().getObjectVolatile(a, getOffset("q")))).x << 28);
             }
         }
-    "##);
+    "##, true);
     assert_eq!(void_long_call(&mut runtime, class_path.as_path(), "get"), 0x87654321);
 }
 
@@ -154,6 +154,6 @@ pub fn unsafe_allocate() {
                 return ret;
             }
         }
-    "##);
+    "##, false);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "get"), 0x06);
 }

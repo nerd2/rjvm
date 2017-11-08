@@ -15,6 +15,6 @@ fn static_init() {
                 return x;
             }
         }
-    "##);
+    "##, false);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "getx"), 1);
 }

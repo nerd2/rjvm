@@ -390,10 +390,12 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
     return Ok(());
 }
 
-pub fn get_runtime(class_paths: &Vec<String>) -> Runtime {
+pub fn get_runtime(class_paths: &Vec<String>, initialise: bool) -> Runtime {
     let mut runtime = Runtime::new(class_paths.clone());
 
-    let _var = execute_method(&mut runtime, "java/lang/System", "initializeSystemClass", "()V", &Vec::new(), false).expect("Failed to initialize system");
+    if initialise {
+        let _var = execute_method(&mut runtime, "java/lang/System", "initializeSystemClass", "()V", &Vec::new(), false).expect("Failed to initialize system");
+    }
 
     return runtime;
 }

@@ -18,7 +18,7 @@ fn tableswitch() {
                 }
             }
         }
-    "##);
+    "##, false);
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "check", &vec!(Variable::Int(1)), "Z"), Variable::Int(0));
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "check", &vec!(Variable::Int(10)), "Z"), Variable::Int(0));
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "check", &vec!(Variable::Int(11)), "Z"), Variable::Int(1));

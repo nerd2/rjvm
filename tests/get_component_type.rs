@@ -20,7 +20,7 @@ fn get_component_type() {
             }
 
         }
-    "##);
+    "##, false);
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "getComponentTypeCheck1", &Vec::new(), "Ljava/lang/String;").extract_string(), "getComponentType$A");
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "getComponentTypeCheck2", &Vec::new(), "Ljava/lang/String;").extract_string(), "boolean");
 }

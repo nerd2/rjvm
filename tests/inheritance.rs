@@ -69,7 +69,7 @@ fn inheritance() {
                 return (runOnJ(c) << 8) + runOnI(c);
             }
         }
-    "##);
+    "##, false);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "basicImplementation"), 1);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "basicImplementationExtension"), 2);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "basicExtension"), 0x3987);

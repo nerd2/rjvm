@@ -3,6 +3,7 @@
 extern crate rjvm;
 
 pub use self::rjvm::get_runtime;
+pub use self::rjvm::get_runtime_bypass_initialisation;
 pub use self::rjvm::run_method;
 pub use self::rjvm::Variable;
 pub use self::rjvm::Runtime;
@@ -18,7 +19,7 @@ use std::fs::File;
 use std::io::Write;
 use std::process::Command;
 
-pub fn setup(classname: &str, source_body: &str) -> (Runtime, PathBuf) {
+pub fn setup(classname: &str, source_body: &str, system_init: bool) -> (Runtime, PathBuf) {
     let source = String::from(source_body);
 
     let mut hasher = DefaultHasher::new();
@@ -54,7 +55,11 @@ pub fn setup(classname: &str, source_body: &str) -> (Runtime, PathBuf) {
     temp_dir.push(classname);
     temp_dir.set_extension("class");
 
-    return (get_runtime(&vec!(String::from(temp_dir.parent().unwrap().to_str().unwrap()))), temp_dir);
+    if system_init {
+        return (get_runtime(&vec!(String::from(temp_dir.parent().unwrap().to_str().unwrap()))), temp_dir);
+    } else {
+        return (get_runtime_bypass_initialisation(&vec!(String::from(temp_dir.parent().unwrap().to_str().unwrap()))), temp_dir);
+    }
 }
 
 

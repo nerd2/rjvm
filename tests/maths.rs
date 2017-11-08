@@ -94,7 +94,7 @@ fn maths() {
                 return ((a << b) >> c) >>> d;
             }
         }
-    "##);
+    "##, false);
     assert_eq!(int_int_call(&mut runtime, class_path.as_path(), "signCheck", 123), 636);
     assert_eq!(int2_int_call(&mut runtime, class_path.as_path(), "intAdd", 1, 2), 3);
     assert_eq!(int2_int_call(&mut runtime, class_path.as_path(), "intAdd", 0x7FFFFFFF, 2), -0x7FFFFFFF);

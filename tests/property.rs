@@ -12,7 +12,7 @@ pub fn get_property() {
                 System.setProperty(prop, value);
             }
         }
-    "##);
+    "##, true);
     assert!(str_str_call(&mut runtime, class_path.as_path(), "get", "abcd").is_none());
     assert_eq!(str_str_call(&mut runtime, class_path.as_path(), "get", "file.encoding").unwrap(), "us-ascii");
     str2_void_call(&mut runtime, class_path.as_path(), "set", "file.encoding", "abc");

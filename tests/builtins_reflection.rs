@@ -17,6 +17,6 @@ fn builtins_reflection() {
                 return testClass.getCallerClass().equals("builtins_reflection") ? 1 : 0;
             }
         }
-    "##);
+    "##, false);
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "getCallerClassTest"), 0x1);
 }

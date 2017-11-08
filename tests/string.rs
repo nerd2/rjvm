@@ -47,7 +47,7 @@ fn string() {
 
 
         }
-    "##);
+    "##, false);
     //assert_eq!(run_method(&mut runtime, class_path.as_path(), "getBytes", &Vec::new(), "B"), Variable::Byte('e' as u8));
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "newAppendExtract", &Vec::new(), "C"), Variable::Int('a' as i32));
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "copy", &Vec::new(), "C"), Variable::Int('o' as i32));
