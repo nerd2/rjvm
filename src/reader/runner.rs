@@ -67,22 +67,30 @@ pub fn do_run_method(runtime: &mut Runtime) -> Result<(), RunnerError> {
                 match &err {
                     &RunnerError::Exception(ref exception) => {
                         runnerPrint!(runtime, true, 3, "Exception {}", exception);
-                        for e in &runtime.current_frame.code.exceptions.clone() {
-                            if current_position >= e.start_pc as u64 && current_position <= e.end_pc as u64 {
-                                if e.catch_type > 0 {
-                                    let class_name = try!(runtime.current_frame.constant_pool.get_class_name(e.catch_type));
-                                    if exception.to_ref().type_ref.name != *class_name {
-                                        continue;
+                        loop {
+                            for e in &runtime.current_frame.code.exceptions.clone() {
+                                if current_position >= e.start_pc as u64 && current_position <= e.end_pc as u64 {
+                                    if e.catch_type > 0 {
+                                        let class_name = try!(runtime.current_frame.constant_pool.get_class_name(e.catch_type));
+                                        if exception.to_ref().type_ref.name != *class_name {
+                                            continue;
+                                        }
                                     }
+
+                                    runnerPrint!(runtime, true, 3, "Caught exception and branching to {}", e.handler_pc);
+
+                                    caught = true;
+                                    runtime.push_on_stack(exception.clone());
+                                    runtime.current_frame.return_pos = e.handler_pc as u64;
+                                    break;
                                 }
+                            }
 
-                                runnerPrint!(runtime, true, 3, "Caught exception and branching to {}", e.handler_pc);
-
-                                caught = true;
-                                runtime.push_on_stack(exception.clone());
-                                buf.set_position(e.handler_pc as u64);
+                            if caught == true || runtime.previous_frames.len() == 0 {
                                 break;
                             }
+
+                            runtime.current_frame = runtime.previous_frames.pop().unwrap();
                         }
                     },
                     &RunnerError::Invoke => {
@@ -100,7 +108,10 @@ pub fn do_run_method(runtime: &mut Runtime) -> Result<(), RunnerError> {
                 }
 
                 if caught == false {
+                    runnerPrint!(runtime, true, 3, "Uncaught");
                     return Err(err);
+                } else {
+                    break;
                 }
             }
         }
