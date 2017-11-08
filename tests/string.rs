@@ -51,6 +51,6 @@ fn string() {
     //assert_eq!(run_method(&mut runtime, class_path.as_path(), "getBytes", &Vec::new(), "B"), Variable::Byte('e' as u8));
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "newAppendExtract", &Vec::new(), "C"), Variable::Int('a' as i32));
     assert_eq!(run_method(&mut runtime, class_path.as_path(), "copy", &Vec::new(), "C"), Variable::Int('o' as i32));
-    assert_ne!(run_method(&mut runtime, class_path.as_path(), "getHashCode", &Vec::new(), "I"), Variable::Int(0));
+    assert_eq!(run_method(&mut runtime, class_path.as_path(), "getHashCode", &Vec::new(), "I"), Variable::Int(-697224731));
     assert_eq!(void_int_call(&mut runtime, class_path.as_path(), "intern"), 0x2);
 }

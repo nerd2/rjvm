@@ -381,21 +381,7 @@ pub fn run_method(runtime: &mut Runtime, class_result: &ClassResult, method: &st
     let class = try!(bootstrap_class_and_dependencies(runtime, name.as_str(), class_result));
 
     runtime.current_frame.class = Some(class);
-    for arg in arguments {
-        match arg {
-            &Variable::Long(ref _x) => {
-                runtime.current_frame.local_variables.push(arg.clone());
-                runtime.current_frame.local_variables.push(arg.clone());
-            },
-            &Variable::Double(ref _x) => {
-                runtime.current_frame.local_variables.push(arg.clone());
-                runtime.current_frame.local_variables.push(arg.clone());
-            },
-            _ => {
-                runtime.current_frame.local_variables.push(arg.clone());
-            }
-        }
-    }
+    runtime.add_arguments(arguments);
 
     let method_descriptor = generate_method_descriptor(&arguments, return_descriptor, true);
     runnerPrint!(runtime, true, 1, "Finding method {} with descriptor {}", method, method_descriptor);

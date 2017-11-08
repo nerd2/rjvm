@@ -1,7 +1,6 @@
 extern crate byteorder;
 
 use self::byteorder::{BigEndian, ReadBytesExt};
-use reader::builtins::*;
 use reader::class_reader::*;
 use reader::jvm::construction::*;
 use reader::jvm::class_objects::*;
@@ -152,74 +151,10 @@ pub fn invoke_nested(runtime: &mut Runtime, class: Rc<Class>, args: Vec<Variable
 }
 
 fn invoke(desc: &str, runtime: &mut Runtime, index: u16, with_obj: bool, special: bool) -> Result<(), RunnerError> {
-    let debug = true;
-    let mut code : Option<Code>;
-    let new_frame : Option<Frame>;
-    let new_method_name : Option<String>;
-    let current_op_stack_size = runtime.current_frame.operand_stack.len();
+    let (class_name, method_name, descriptor) = try!(runtime.current_frame.constant_pool.get_method(index)).clone();
+    runnerPrint!(runtime, true, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
 
-    {
-        let (class_name, method_name, descriptor) = try!(runtime.current_frame.constant_pool.get_method(index));
-        new_method_name = Some((*class_name).clone() + "/" + method_name.as_str());
-        let (parameters, _return_type) = try!(parse_function_type_descriptor(runtime, descriptor.as_str()));
-        let extra_parameter = if with_obj {1} else {0};
-        let new_local_variables = runtime.current_frame.operand_stack.split_off(current_op_stack_size - parameters.len() - extra_parameter);
-
-        runnerPrint!(runtime, debug, 1, "{} {} {} {}", desc, class_name, method_name, descriptor);
-
-        if try!(try_builtin(&class_name, &method_name, &descriptor, &new_local_variables, runtime)) {
-            return Ok(());
-        }
-
-        let mut class = try!(load_class(runtime, class_name.as_str()));
-
-        if with_obj {
-            let mut obj = new_local_variables[0].to_ref();
-
-            if obj.is_null {
-                return Err(RunnerError::ClassInvalid2(format!("Missing obj ref on local var stack for method on {}", class_name)));
-            }
-
-            if special {
-                while obj.type_ref.name != *class_name {
-                    let new_obj = try!(
-                        obj.super_class.borrow().as_ref()
-                            .ok_or(RunnerError::ClassInvalid2(format!("Couldn't find class {} in tree for {}", class_name, obj.type_ref.name)))
-                    ).clone();
-                    obj = new_obj;
-                }
-            } else {
-                obj = get_most_sub_class(obj);
-            }
-
-            // Find method
-            while { code = obj.type_ref.cr.get_code(method_name.as_str(), descriptor.as_str()).ok(); code.is_none() } {
-                if obj.super_class.borrow().is_none() {
-                    return Err(RunnerError::ClassInvalid2(format!("Could not find super class of object '{}' that matched method '{}' '{}'", obj, method_name, descriptor)))
-                }
-                let new_obj = obj.super_class.borrow().clone().unwrap();
-                obj = new_obj;
-            }
-            class = obj.type_ref.clone();
-        } else {
-            code = Some(try!(class.cr.get_code(method_name.as_str(), descriptor.as_str())));
-        }
-
-        new_frame = Some(Frame {
-            class: Some(class.clone()),
-            constant_pool: class.cr.constant_pool.clone(),
-            operand_stack: Vec::new(),
-            local_variables: new_local_variables,
-            name: new_method_name.unwrap(),
-            code: code.unwrap(),
-            return_pos: 0,
-        });
-
-    }
-
-    runtime.previous_frames.push(runtime.current_frame.clone());
-    runtime.current_frame = new_frame.unwrap();
-    return Err(RunnerError::Invoke);
+    return runtime.invoke(class_name, method_name, descriptor, with_obj, special);
 }
 
 fn fcmp(desc: &str, runtime: &mut Runtime, is_g: bool) -> Result<(), RunnerError> {
