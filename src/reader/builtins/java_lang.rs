@@ -183,6 +183,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             try!(invoke_nested(runtime, properties.to_ref_type().clone(), vec!(properties.clone()), "<init>", "()V", false));
             runnerPrint!(runtime, true, 2, "BUILTIN: initProperties {}", properties);
             try!(set_property(runtime, &properties, "file.encoding", "us-ascii"));
+            try!(set_property(runtime, &properties, "line.separator", "\n"));
             runtime.push_on_stack(properties);
         },
         ("java/lang/System", "setIn0", "(Ljava/io/InputStream;)V") => {

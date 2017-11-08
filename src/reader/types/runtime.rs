@@ -16,6 +16,8 @@ pub struct Runtime {
     pub properties: HashMap<String, Variable>,
     pub class_objects: HashMap<String, Variable>,
     pub object_count: i32,
+    pub stdout: String,
+    pub stderr: String,
 }
 impl Runtime {
     pub fn new(class_paths: Vec<String>) -> Runtime {
@@ -30,6 +32,8 @@ impl Runtime {
             properties: HashMap::new(),
             class_objects: HashMap::new(),
             object_count: rand::random::<i32>(),
+            stdout: String::new(),
+            stderr: String::new(),
         };
     }
 

@@ -111,6 +111,11 @@ pub fn double2_double_call(runtime: &mut Runtime, path: &Path, method: &str, arg
     return run_method(runtime, path, method, &vec!(Variable::Double(arg), Variable::Double(arg2)), "D").to_double();
 }
 
+pub fn str_void_call(runtime: &mut Runtime, path: &Path, method: &str, arg: &str) {
+    let argvar = make_string(runtime, arg).expect("Couldn't create string for argument");
+    run_method(runtime, path, method, &vec!(argvar), "V");
+}
+
 pub fn str_str_call(runtime: &mut Runtime, path: &Path, method: &str, arg: &str) -> Option<String> {
     let argvar = make_string(runtime, arg).expect("Couldn't create string for argument");
     let ret = run_method(runtime, path, method, &vec!(argvar), "Ljava/lang/String;");
