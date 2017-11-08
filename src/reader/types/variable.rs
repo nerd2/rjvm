@@ -44,6 +44,26 @@ impl Variable {
             }
         }
     }
+    pub fn to_byte(&self) -> u8 {
+        match self {
+            &Variable::Byte(ref x) => {
+                return *x;
+            },
+            _ => {
+                panic!("Couldn't convert to byte");
+            }
+        }
+    }
+    pub fn to_short(&self) -> i16 {
+        match self {
+            &Variable::Short(ref x) => {
+                return *x;
+            },
+            _ => {
+                panic!("Couldn't convert to short");
+            }
+        }
+    }
     pub fn to_int(&self) -> i32 {
         match self {
             &Variable::Boolean(ref x) => {

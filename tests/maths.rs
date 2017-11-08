@@ -48,6 +48,13 @@ fn maths() {
                 return ((((a + b) - c) * (-d)) / e) % f;
             }
 
+            public static int signCheck(int ret) {
+                for(int i = -5; i < 33; i++){
+                    ret += i;
+                }
+                return ret;
+            }
+
             public static byte byteAdd(byte a, byte b) { return (byte)(a + b); }
             public static byte byteSub(byte a, byte b) { return (byte)(a - b); }
             public static byte byteMul(byte a, byte b) { return (byte)(a * b); }
@@ -88,6 +95,7 @@ fn maths() {
             }
         }
     "##);
+    assert_eq!(int_int_call(&mut runtime, class_path.as_path(), "signCheck", 123), 636);
     assert_eq!(int2_int_call(&mut runtime, class_path.as_path(), "intAdd", 1, 2), 3);
     assert_eq!(int2_int_call(&mut runtime, class_path.as_path(), "intAdd", 0x7FFFFFFF, 2), -0x7FFFFFFF);
     assert_eq!(int2_int_call(&mut runtime, class_path.as_path(), "intSub", 123, 2), 121);

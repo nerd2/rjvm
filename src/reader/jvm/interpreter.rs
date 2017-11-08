@@ -338,12 +338,12 @@ pub fn step(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) -> Re
             runtime.push_on_stack(Variable::Float(val));
         }
         16 => {
-            let byte = try!(buf.read_u8()) as i32;
+            let byte = try!(buf.read_u8()) as i8 as i32;
             runnerPrint!(runtime, true, 2, "BIPUSH {}", byte);
             runtime.push_on_stack(Variable::Int(byte));
         }
         17 => {
-            let short = try!(buf.read_u16::<BigEndian>()) as i32;
+            let short = try!(buf.read_u16::<BigEndian>()) as i16 as i32;
             runnerPrint!(runtime, true, 2, "SIPUSH {}", short);
             runtime.push_on_stack(Variable::Int(short));
         }
