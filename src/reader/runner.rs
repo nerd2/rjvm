@@ -364,6 +364,17 @@ pub fn parse_function_type_descriptor(runtime: &mut Runtime, descriptor: &str) -
     }
 }
 
+fn execute_method(runtime: &mut Runtime, class: &str, method: &str, descriptor: &str, _args: &Vec<Variable>, ret: bool) -> Result<Variable, RunnerError> {
+    //runtime.add_arguments(arguments);
+    runtime.invoke(Rc::new(String::from(class)), Rc::new(String::from(method)), Rc::new(String::from(descriptor)), false, false);
+    try!(do_run_method(runtime));
+    if ret {
+        return Ok(runtime.pop_from_stack().unwrap().clone());
+    } else {
+        return Ok(Variable::Int(0));
+    }
+}
+
 pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
     println!("Running");
     let mut runtime = Runtime::new(class_paths.clone());
@@ -380,7 +391,11 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
 }
 
 pub fn get_runtime(class_paths: &Vec<String>) -> Runtime {
-    return Runtime::new(class_paths.clone());
+    let mut runtime = Runtime::new(class_paths.clone());
+
+    let _var = execute_method(&mut runtime, "java/lang/System", "initializeSystemClass", "()V", &Vec::new(), false).expect("Failed to initialize system");
+
+    return runtime;
 }
 
 pub fn run_method(runtime: &mut Runtime, class_result: &ClassResult, method: &str, arguments: &Vec<Variable>, return_descriptor: String) -> Result<Variable, RunnerError> {

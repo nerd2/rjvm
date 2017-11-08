@@ -58,6 +58,15 @@ fn deallocate(ptr: *mut u8, count: usize) {
 
 pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor: &Rc<String>, args: &Vec<Variable>, runtime: &mut Runtime) -> Result<bool, RunnerError> {
     match (class_name.as_str(), method_name.as_str(), descriptor.as_str()) {
+        ("sun/misc/Signal", "findSignal", "(Ljava/lang/String;)I") => {
+            let signal = args[0].clone().extract_string();
+            runnerPrint!(runtime, true, 2, "BUILTIN: TODO findSignal {}", signal);
+            runtime.push_on_stack(Variable::Int(0));
+        }
+        ("sun/misc/Signal", "handle0", "(IJ)J") => {
+            runnerPrint!(runtime, true, 2, "BUILTIN: TODO signal handle0");
+            runtime.push_on_stack(Variable::Long(0));
+        }
         ("sun/misc/Unsafe", "registerNatives", "()V") => {return Ok(true)},
         ("sun/misc/Unsafe", "arrayBaseOffset", "(Ljava/lang/Class;)I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: arrayBaseOffset");

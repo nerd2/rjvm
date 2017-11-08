@@ -14,7 +14,7 @@ fn set_property(runtime: &mut Runtime, properties: &Variable, key: &str, value: 
     return Ok(());
 }
 
-fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descriptor: Rc<String>, _access: u16, slot: i32)  -> Result<Variable, RunnerError> {
+fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descriptor: Rc<String>, access: u16, slot: i32)  -> Result<Variable, RunnerError> {
     let class_name = "java/lang/reflect/Field";
     let name_var = try!(make_string(runtime, name.as_str()));
     let name_var_interned = try!(string_intern(runtime, &name_var));
@@ -26,6 +26,7 @@ fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descrip
     try!(put_field(runtime, var.to_ref(), class_name, "type", type_obj));
     try!(put_field(runtime, var.to_ref(), class_name, "slot", Variable::Int(slot)));
     try!(put_field(runtime, var.to_ref(), class_name, "clazz", clazz.clone()));
+    try!(put_field(runtime, var.to_ref(), class_name, "modifiers", Variable::Int(access as i32)));
     return Ok(var);
 }
 
@@ -176,16 +177,28 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             }
         },
         ("java/lang/System", "registerNatives", "()V") => {
-            // TODO: move below
-            //let properties = args[0].clone();
-            let properties = try!(construct_object(runtime, &"java/util/Properties"));
-            try!(invoke_nested(runtime, properties.to_ref_type().clone(), vec!(properties.clone()), "<init>", "()V", false));
-            runnerPrint!(runtime, true, 2, "BUILTIN: registerNatives {}", properties);
-            try!(set_property(runtime, &properties, "file.encoding", "us-ascii"));
-            try!(put_static(runtime, &"java/lang/System", &"props", properties));
-            //runtime.push_on_stack(properties);
         },
         ("java/lang/System", "initProperties", "(Ljava/util/Properties;)Ljava/util/Properties;") => {
+            let properties = args[0].clone();
+            try!(invoke_nested(runtime, properties.to_ref_type().clone(), vec!(properties.clone()), "<init>", "()V", false));
+            runnerPrint!(runtime, true, 2, "BUILTIN: initProperties {}", properties);
+            try!(set_property(runtime, &properties, "file.encoding", "us-ascii"));
+            runtime.push_on_stack(properties);
+        },
+        ("java/lang/System", "setIn0", "(Ljava/io/InputStream;)V") => {
+            let stream = args[0].clone();
+            runnerPrint!(runtime, true, 2, "BUILTIN: setIn0 {}", stream);
+            try!(put_static(runtime, "java/lang/System", "in", stream));
+        },
+        ("java/lang/System", "setOut0", "(Ljava/io/PrintStream;)V") => {
+            let stream = args[0].clone();
+            runnerPrint!(runtime, true, 2, "BUILTIN: setOut0 {}", stream);
+            try!(put_static(runtime, "java/lang/System", "out", stream));
+        },
+        ("java/lang/System", "setErr0", "(Ljava/io/PrintStream;)V") => {
+            let stream = args[0].clone();
+            runnerPrint!(runtime, true, 2, "BUILTIN: setErr0 {}", stream);
+            try!(put_static(runtime, "java/lang/System", "err", stream));
         },
         ("java/lang/System", "loadLibrary", "(Ljava/lang/String;)V") => {
             let lib_string_obj = args[0].clone().to_ref();
@@ -197,6 +210,10 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             runtime.push_on_stack(Variable::Int(1));
         },
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
+        ("java/lang/Object", "notifyAll", "()V") => {
+            runnerPrint!(runtime, true, 2, "BUILTIN: TODO notifyAll {}", args[0]);
+            return Ok(true)
+        },
         ("java/lang/String", "intern", "()Ljava/lang/String;") => {
             let interned = try!(string_intern(runtime, &args[0]));
             runnerPrint!(runtime, true, 2, "BUILTIN: intern {} {:p}", args[0], &*interned.to_ref());
