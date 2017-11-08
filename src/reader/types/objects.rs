@@ -16,6 +16,25 @@ pub struct Object {
     pub sub_class: RefCell<Option<Weak<Object>>>,
     pub code: i32
 }
+impl Object {
+    pub fn get_at_index(&self, index: i64) -> Result<Variable, RunnerError> {
+        let field = &self.type_ref.cr.fields[index as usize];
+        let name_string = try!(self.type_ref.cr.constant_pool.get_str(field.name_index));
+        let members = self.members.borrow();
+        return Ok(members.get(&*name_string).unwrap().clone());
+    }
+
+    pub fn deep_compare(&self, other:&Self) -> bool {
+        let self_sub_class = self.sub_class.borrow();
+        let other_sub_class = other.sub_class.borrow();
+
+        return self.type_ref == other.type_ref &&
+            self.members == other.members &&
+            self_sub_class.is_some() == other_sub_class.is_some() &&
+            (self_sub_class.is_none() || (self_sub_class.clone().unwrap().upgrade() == other_sub_class.clone().unwrap().upgrade())) &&
+            self.super_class == other.super_class;
+    }
+}
 
 impl fmt::Display for Object {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -29,16 +48,9 @@ impl fmt::Display for Object {
     }
 }
 
-impl PartialEq for Object { // Have to implement PartialEq because not derrivable for Weaks in general. We can assume the weak ref is constant.
+impl PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
-        let self_sub_class = self.sub_class.borrow();
-        let other_sub_class = other.sub_class.borrow();
-
-        return self.type_ref == other.type_ref &&
-            self.members == other.members &&
-            self_sub_class.is_some() == other_sub_class.is_some() &&
-            (self_sub_class.is_none() || (self_sub_class.clone().unwrap().upgrade() == other_sub_class.clone().unwrap().upgrade())) &&
-            self.super_class == other.super_class;
+        return (self.is_null && other.is_null) || (self as *const _ == other as *const _);
     }
 }
 

@@ -62,6 +62,10 @@ pub fn void_bool_call(runtime: &mut Runtime, path: &Path, method: &str) -> bool 
     return run_method(runtime, path, method, &Vec::new(), "Z").to_bool();
 }
 
+pub fn bool3_bool_call(runtime: &mut Runtime, path: &Path, method: &str, arg1: bool, arg2: bool, arg3: bool) -> bool {
+    return run_method(runtime, path, method, &vec!(Variable::Boolean(arg1), Variable::Boolean(arg2), Variable::Boolean(arg3)), "Z").to_bool();
+}
+
 pub fn void_int_call(runtime: &mut Runtime, path: &Path, method: &str) -> i32 {
     return run_method(runtime, path, method, &Vec::new(), "I").to_int();
 }
@@ -78,8 +82,16 @@ pub fn int2_int_call(runtime: &mut Runtime, path: &Path, method: &str, arg: i32,
     return run_method(runtime, path, method, &vec!(Variable::Int(arg), Variable::Int(arg2)), "I").to_int();
 }
 
+pub fn int3_int_call(runtime: &mut Runtime, path: &Path, method: &str, arg: i32, arg2: i32, arg3: i32) -> i32 {
+    return run_method(runtime, path, method, &vec!(Variable::Int(arg), Variable::Int(arg2), Variable::Int(arg3)), "I").to_int();
+}
+
 pub fn long2_long_call(runtime: &mut Runtime, path: &Path, method: &str, arg: i64, arg2: i64) -> i64 {
     return run_method(runtime, path, method, &vec!(Variable::Long(arg), Variable::Long(arg2)), "J").to_long();
+}
+
+pub fn long3_long_call(runtime: &mut Runtime, path: &Path, method: &str, arg: i64, arg2: i64, arg3: i64) -> i64 {
+    return run_method(runtime, path, method, &vec!(Variable::Long(arg), Variable::Long(arg2), Variable::Long(arg3)), "J").to_long();
 }
 
 pub fn float2_float_call(runtime: &mut Runtime, path: &Path, method: &str, arg: f32, arg2: f32) -> f32 {
