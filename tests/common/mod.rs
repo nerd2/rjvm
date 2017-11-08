@@ -86,6 +86,10 @@ pub fn int3_int_call(runtime: &mut Runtime, path: &Path, method: &str, arg: i32,
     return run_method(runtime, path, method, &vec!(Variable::Int(arg), Variable::Int(arg2), Variable::Int(arg3)), "I").to_int();
 }
 
+pub fn void_long_call(runtime: &mut Runtime, path: &Path, method: &str) -> i64 {
+    return run_method(runtime, path, method, &Vec::new(), "J").to_long();
+}
+
 pub fn long2_long_call(runtime: &mut Runtime, path: &Path, method: &str, arg: i64, arg2: i64) -> i64 {
     return run_method(runtime, path, method, &vec!(Variable::Long(arg), Variable::Long(arg2)), "J").to_long();
 }

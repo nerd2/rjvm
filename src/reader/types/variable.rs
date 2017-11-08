@@ -46,6 +46,9 @@ impl Variable {
     }
     pub fn to_byte(&self) -> u8 {
         match self {
+            &Variable::Int(ref x) => {
+                return *x as u8;
+            },
             &Variable::Byte(ref x) => {
                 return *x;
             },
@@ -56,6 +59,9 @@ impl Variable {
     }
     pub fn to_short(&self) -> i16 {
         match self {
+            &Variable::Int(ref x) => {
+                return *x as i16;
+            },
             &Variable::Short(ref x) => {
                 return *x;
             },

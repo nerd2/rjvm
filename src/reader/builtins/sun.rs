@@ -71,6 +71,15 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             runnerPrint!(runtime, true, 2, "BUILTIN: pageSize");
             runtime.push_on_stack(Variable::Int(4096));
         },
+        ("sun/misc/Unsafe", "getObjectVolatile", "(Ljava/lang/Object;J)Ljava/lang/Object;") => { try!(get_at_index(runtime, args, "getObjectVolatile", Variable::to_ref)); }
+        ("sun/misc/Unsafe", "getIntVolatile", "(Ljava/lang/Object;J)I") => { try!(get_at_index(runtime, args, "getIntVolatile", Variable::to_int)); }
+        ("sun/misc/Unsafe", "getBooleanVolatile", "(Ljava/lang/Object;J)Z") => { try!(get_at_index(runtime, args, "getBooleanVolatile", Variable::to_bool)); }
+        ("sun/misc/Unsafe", "getByteVolatile", "(Ljava/lang/Object;J)B") => { try!(get_at_index(runtime, args, "getByteVolatile", Variable::to_byte)); }
+        ("sun/misc/Unsafe", "getShortVolatile", "(Ljava/lang/Object;J)S") => { try!(get_at_index(runtime, args, "getShortVolatile", Variable::to_short)); }
+        ("sun/misc/Unsafe", "getCharVolatile", "(Ljava/lang/Object;J)C") => { try!(get_at_index(runtime, args, "getCharVolatile", Variable::to_char)); }
+        ("sun/misc/Unsafe", "getLongVolatile", "(Ljava/lang/Object;J)J") => { try!(get_at_index(runtime, args, "getLongVolatile", Variable::to_long)); }
+        ("sun/misc/Unsafe", "getFloatVolatile", "(Ljava/lang/Object;J)F") => { try!(get_at_index(runtime, args, "getFloatVolatile", Variable::to_float)); }
+        ("sun/misc/Unsafe", "getDoubleVolatile", "(Ljava/lang/Object;J)D") => { try!(get_at_index(runtime, args, "getDoubleVolatile", Variable::to_double)); }
         ("sun/misc/Unsafe", "compareAndSwapObject", "(Ljava/lang/Object;JLjava/lang/Object;Ljava/lang/Object;)Z") => { try!(compare_and_swap(runtime, args, "compareAndSwapObject", Variable::to_ref, 0));}
         ("sun/misc/Unsafe", "compareAndSwapInt", "(Ljava/lang/Object;JII)Z") => { try!(compare_and_swap(runtime, args, "compareAndSwapInt", Variable::to_int, 0));}
         ("sun/misc/Unsafe", "compareAndSwapLong", "(Ljava/lang/Object;JJJ)Z") => { try!(compare_and_swap(runtime, args, "compareAndSwapLong", Variable::to_long, 1));}

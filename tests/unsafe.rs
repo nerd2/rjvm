@@ -2,7 +2,7 @@ mod common;
 use common::*;
 
 #[test]
-pub fn compare_and_swap() {
+pub fn unsafe_compare_and_swap() {
     let (mut runtime, class_path) = setup("compare_and_swap", r##"
         import sun.misc.Unsafe;
         import java.lang.reflect.Field;
@@ -74,4 +74,67 @@ pub fn compare_and_swap() {
 
     assert_eq!(long3_long_call(&mut runtime, class_path.as_path(), "compareAndSwapLong", 5, 5, 10), 10);
     assert_eq!(long3_long_call(&mut runtime, class_path.as_path(), "compareAndSwapLong", 5, 6, 10), 5);
+}
+
+
+#[test]
+pub fn unsafe_get_volatile() {
+    let (mut runtime, class_path) = setup("unsafe_get_volatile", r##"
+        import sun.misc.Unsafe;
+        import java.lang.reflect.Field;
+        import java.lang.NoSuchFieldException;
+        import java.lang.RuntimeException;
+
+        public class unsafe_get_volatile {
+            private static class A {
+                public int i;
+                public int j;
+                public long k;
+                public long l;
+                public short m;
+                public short n;
+                public B p;
+                public B q;
+            }
+
+            private static class B {
+                public long x;
+            }
+
+            private static long getOffset(String field) {
+                Field f;
+                try {
+                    f = A.class.getField(field);
+                } catch (NoSuchFieldException e) {
+                    throw new RuntimeException(e);
+                }
+                return Unsafe.getUnsafe().objectFieldOffset(f);
+            }
+
+            public static long get() {
+                A a = new A();
+                a.i = 1;
+                a.j = 2;
+                a.k = 3;
+                a.l = 4;
+                a.m = 5;
+                a.n = 6;
+                a.p = new B();
+                a.p.x = 7;
+                a.q = new B();
+                a.q.x = 8;
+
+                return
+                    (Unsafe.getUnsafe().getIntVolatile(a, getOffset("i")) << 0) +
+                    (Unsafe.getUnsafe().getIntVolatile(a, getOffset("j")) << 4) +
+                    (Unsafe.getUnsafe().getLongVolatile(a, getOffset("k")) << 8) +
+                    (Unsafe.getUnsafe().getLongVolatile(a, getOffset("l")) << 12) +
+                    (Unsafe.getUnsafe().getShortVolatile(a, getOffset("m")) << 16) +
+                    (Unsafe.getUnsafe().getShortVolatile(a, getOffset("n")) << 20) +
+                    (((B)(Unsafe.getUnsafe().getObjectVolatile(a, getOffset("p")))).x << 24) +
+                    (((B)(Unsafe.getUnsafe().getObjectVolatile(a, getOffset("q")))).x << 28);
+            }
+        }
+    "##);
+    assert_eq!(void_long_call(&mut runtime, class_path.as_path(), "get"), 0x87654321);
 }
