@@ -14,6 +14,7 @@ mod reader;
 
 pub use reader::runner::Runtime;
 pub use reader::runner::Variable;
+pub use reader::runner::make_string;
 
 fn get_class_paths() -> Vec<String> {
     return vec!(String::from("./javart/"));

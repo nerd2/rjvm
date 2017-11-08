@@ -7,6 +7,13 @@ use reader::class_reader::*;
 use std;
 use std::rc::Rc;
 
+fn set_property(runtime: &mut Runtime, properties: &Variable, key: &str, value: &str) -> Result<(), RunnerError> {
+    let keyvar = make_string(runtime, key).expect("Couldn't create string for argument");
+    let valuevar = make_string(runtime, value).expect("Couldn't create string for argument");
+    try!(invoke_nested(runtime, properties.to_ref_type().clone(), vec!(properties.clone(), keyvar, valuevar), "setProperty", "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/Object;", false));
+    return Ok(());
+}
+
 fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descriptor: Rc<String>, _access: u16, slot: i32)  -> Result<Variable, RunnerError> {
     let class_name = "java/lang/reflect/Field";
     let name_var = try!(make_string(runtime, name.as_str()));
@@ -89,6 +96,18 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let ref class_loader = args[2];
             let ref caller_class = args[3];
             runnerPrint!(runtime, true, 2, "BUILTIN: forName0 {} {} {} {}", descriptor, initialize, class_loader, caller_class);
+            // Load class
+            let maybe_class = load_class(runtime, descriptor.as_str());
+            if maybe_class.is_err() {
+                let err = maybe_class.unwrap_err();
+                match err {
+                    RunnerError::ClassNotLoaded(ref _s) => {
+                        let exception = try!(construct_object(runtime, &"java/lang/ClassNotFoundException"));
+                        return Err(RunnerError::Exception(exception))
+                    },
+                    _ => return Err(err)
+                };
+            }
 
             let var = try!(get_class_object_from_descriptor(runtime, type_name_to_descriptor(&descriptor).as_str()));
             runtime.push_on_stack(var);
@@ -156,25 +175,23 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
                 dest_data[(dest_pos + n) as usize] = src_data[(src_pos + n) as usize].clone();
             }
         },
-        ("java/lang/System", "registerNatives", "()V") => {},
+        ("java/lang/System", "registerNatives", "()V") => {
+            // TODO: move below
+            //let properties = args[0].clone();
+            let properties = try!(construct_object(runtime, &"java/util/Properties"));
+            try!(invoke_nested(runtime, properties.to_ref_type().clone(), vec!(properties.clone()), "<init>", "()V", false));
+            runnerPrint!(runtime, true, 2, "BUILTIN: registerNatives {}", properties);
+            try!(set_property(runtime, &properties, "file.encoding", "us-ascii"));
+            try!(put_static(runtime, &"java/lang/System", &"props", properties));
+            //runtime.push_on_stack(properties);
+        },
+        ("java/lang/System", "initProperties", "(Ljava/util/Properties;)Ljava/util/Properties;") => {
+        },
         ("java/lang/System", "loadLibrary", "(Ljava/lang/String;)V") => {
             let lib_string_obj = args[0].clone().to_ref();
             let lib = try!(extract_from_string(runtime, &lib_string_obj));
             runnerPrint!(runtime, true, 2, "BUILTIN: loadLibrary {}", lib);
         }
-        ("java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;") => {
-            let obj = args[0].clone().to_ref();
-            let string = try!(extract_from_string(runtime, &obj));
-            if runtime.properties.contains_key(&string) {
-                runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} valid", string);
-                let property = runtime.properties.get(&string).unwrap().clone();
-                runtime.push_on_stack(property);
-            } else {
-                runnerPrint!(runtime, true, 2, "BUILTIN: getProperty {} NULL", string);
-                let null_string = try!(construct_null_object_by_name(runtime, "java/lang/String"));
-                runtime.push_on_stack(null_string);
-            }
-        },
         ("java/lang/Runtime", "availableProcessors", "()I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: availableProcessors");
             runtime.push_on_stack(Variable::Int(1));

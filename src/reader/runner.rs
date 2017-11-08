@@ -8,6 +8,7 @@ pub use reader::types::frame::*;
 pub use reader::types::objects::*;
 pub use reader::types::runtime::*;
 pub use reader::types::variable::*;
+pub use reader::util::make_string;
 use reader::util::*;
 use std::io;
 use std::io::Cursor;
@@ -383,7 +384,7 @@ pub fn run_method(runtime: &mut Runtime, class_result: &ClassResult, method: &st
     runtime.current_frame.class = Some(class);
     runtime.add_arguments(arguments);
 
-    let method_descriptor = generate_method_descriptor(&arguments, return_descriptor, true);
+    let method_descriptor = generate_method_descriptor(&arguments, return_descriptor.clone(), true);
     runnerPrint!(runtime, true, 1, "Finding method {} with descriptor {}", method, method_descriptor);
     let code = try!(class_result.get_code(method, method_descriptor.as_str()));
 
@@ -391,5 +392,9 @@ pub fn run_method(runtime: &mut Runtime, class_result: &ClassResult, method: &st
     runtime.current_frame.code = code;
     try!(do_run_method(runtime));
 
-    return Ok(runtime.pop_from_stack().unwrap().clone());
+    if return_descriptor == "V" {
+        return Ok(Variable::Int(0));
+    } else {
+        return Ok(runtime.pop_from_stack().unwrap().clone());
+    }
 }

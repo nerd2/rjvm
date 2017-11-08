@@ -6,6 +6,7 @@ pub use self::rjvm::get_runtime;
 pub use self::rjvm::run_method;
 pub use self::rjvm::Variable;
 pub use self::rjvm::Runtime;
+pub use self::rjvm::make_string;
 pub use std::path::{Path, PathBuf};
 
 use std::collections::hash_map::DefaultHasher;
@@ -43,7 +44,10 @@ pub fn setup(classname: &str, source_body: &str) -> (Runtime, PathBuf) {
             .args(&["-d", temp_dir.to_str().unwrap(), source_path.to_str().unwrap()])
             .output()
             .unwrap();
-        assert!(output.status.success());
+        if output.status.success() == false {
+            fs::remove_dir_all(temp_dir).expect("Failed to remove temp dir after compilation failure");
+            panic!("failed to compile: {}", String::from_utf8_lossy(&output.stderr));
+        }
         println!("compiled: {}", temp_dir.display());
     }
 
@@ -85,3 +89,20 @@ pub fn float2_float_call(runtime: &mut Runtime, path: &Path, method: &str, arg: 
 pub fn double2_double_call(runtime: &mut Runtime, path: &Path, method: &str, arg: f64, arg2: f64) -> f64 {
     return run_method(runtime, path, method, &vec!(Variable::Double(arg), Variable::Double(arg2)), "D").to_double();
 }
+
+pub fn str_str_call(runtime: &mut Runtime, path: &Path, method: &str, arg: &str) -> Option<String> {
+    let argvar = make_string(runtime, arg).expect("Couldn't create string for argument");
+    let ret = run_method(runtime, path, method, &vec!(argvar), "Ljava/lang/String;");
+    if ret.is_null() {
+        return None;
+    } else {
+        return Some(ret.extract_string());
+    }
+}
+
+pub fn str2_void_call(runtime: &mut Runtime, path: &Path, method: &str, arg1: &str, arg2: &str) {
+    let argvar1 = make_string(runtime, arg1).expect("Couldn't create string for argument");
+    let argvar2 = make_string(runtime, arg2).expect("Couldn't create string for argument");
+    run_method(runtime, path, method, &vec!(argvar1, argvar2), "V");
+}
+
