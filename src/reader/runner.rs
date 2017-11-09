@@ -1,5 +1,6 @@
 
 extern crate rand;
+extern crate zip;
 use reader::class_reader::*;
 use reader::jvm::construction::*;
 use reader::jvm::interpreter::*;
@@ -10,13 +11,13 @@ pub use reader::types::runtime::*;
 pub use reader::types::variable::*;
 pub use reader::util::make_string;
 use reader::util::*;
+use std::fs::File;
 use std::io;
+use std::io::BufReader;
+use std::io::Read;
 use std::io::Cursor;
 use std::rc::Rc;
-use std::path::Path;
 use std::path::PathBuf;
-use glob::glob;
-
 
 macro_rules! runnerPrint {
     ($runtime:expr, $enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$runtime.previous_frames.len() {print!("|"); } print!("{}: ", $runtime.count); println!($fmt); } }};
@@ -118,6 +119,32 @@ pub fn do_run_method(runtime: &mut Runtime) -> Result<(), RunnerError> {
     }
 }
 
+fn do_find_class<T : Read>(debug: bool, name: &str, reader: T) -> Option<ClassResult> {
+    let mut buf_reader = BufReader::new(reader);
+
+    let maybe_class_result = read_stage_1(&mut buf_reader);
+    if maybe_class_result.is_err() {
+        debugPrint!(debug, 3, "Couldn't read headers of class file {:?}", maybe_class_result.unwrap_err());
+        return None;
+    }
+
+    let mut class_result = maybe_class_result.unwrap();
+
+    if class_result.name().map(|x| *x != name).unwrap_or(true) {
+        debugPrint!(debug, 3, "Name mismatch {:?}, {}", class_result.name(), name);
+        return None;
+    }
+
+    let maybe_read = read_stage_2(&mut buf_reader, &mut class_result);
+
+    if maybe_read.is_err() {
+        debugPrint!(debug, 3, "Failed to read rest of file {:?}", maybe_read.unwrap_err());
+        return None;
+    }
+
+    return Some(class_result);
+}
+
 fn find_class(runtime: &mut Runtime, base_name: &str) -> Result<ClassResult, RunnerError> {
     let debug = false;
     let mut name = String::from(base_name);
@@ -125,59 +152,47 @@ fn find_class(runtime: &mut Runtime, base_name: &str) -> Result<ClassResult, Run
     runnerPrint!(runtime, debug, 3, "Finding class {}", name);
     for class_path in runtime.class_paths.iter() {
         let mut direct_path = PathBuf::from(class_path);
-        for sub in name.split('/') {
-            direct_path.push(sub)
-        }
-        direct_path.set_extension("class");
-        runnerPrint!(runtime, debug, 3, "Trying path {}", direct_path.display());
-        let direct_classname = get_classname(direct_path.as_path());
-        if direct_classname.is_ok() && *direct_classname.as_ref().unwrap() == name {
-            runnerPrint!(runtime, debug, 3, "Name matched for {}", name);
-            let maybe_read = read(Path::new(&direct_path));
-            if maybe_read.is_ok() {
-                return Ok(maybe_read.unwrap());
-            }
-        }
+        let maybe_class =
+            if direct_path.extension().map(|x| x=="jar").unwrap_or(false) {
+                runnerPrint!(runtime, debug, 3, "Trying direct jar load {}", direct_path.display());
 
-        if false {
-            runnerPrint!(runtime, debug, 3, "Finding class {} direct load failed ({}), searching {}",
-                name, match &direct_classname {
-                    &Ok(ref x) => x.clone(),
-                    &Err(ref y) => format!("{:?}", y),
-                }, class_path);
+                let maybe_file = File::open(direct_path.as_path());
+                if maybe_file.is_err() {
+                    runnerPrint!(runtime, debug, 3, "Couldn't open jar file {}", maybe_file.unwrap_err());
+                    continue;
+                }
 
-            // Else try globbing
-            let mut glob_path = class_path.clone();
-            glob_path.push_str("/**/*.class");
-            let maybe_glob = glob(glob_path.as_str());
-            if maybe_glob.is_err() {
-                runnerPrint!(runtime, true, 1, "Error globbing class path {}", class_path);
-                continue;
-            }
+                let mut maybe_zip = zip::ZipArchive::new(maybe_file.unwrap());
 
-            let class_match = maybe_glob.unwrap()
-                .filter_map(Result::ok)
-                .filter(|x| {
-                    let classname = get_classname(&x);
-                    return classname.is_ok() && classname.unwrap() == name;
-                })
-                .nth(0);
+                if maybe_zip.is_err() {
+                    runnerPrint!(runtime, debug, 3, "Couldn't load zip {:?}", maybe_zip.unwrap_err());
+                    continue;
+                }
 
-            if class_match.is_none() {
-                runnerPrint!(runtime, debug, 2, "Could not find {} on class path {}", name, class_path);
-                continue;
-            }
+                let maybe_zip_file = maybe_zip.as_mut().unwrap().by_name((name.clone() + ".class").as_str());
+                if maybe_zip_file.is_err() {
+                    runnerPrint!(runtime, debug, 3, "Couldn't find class {} in jar", name.as_str());
+                    continue;
+                }
 
-            let maybe_read = read(&class_match.unwrap());
-            if maybe_read.is_err() {
-                runnerPrint!(runtime, true, 1, "Error reading class {} on class path {}", name, class_path);
-                continue;
-            }
+                do_find_class(debug, name.as_str(), maybe_zip_file.unwrap())
+            } else {
+                for sub in name.split('/') {
+                    direct_path.push(sub)
+                }
+                direct_path.set_extension("class");
+                runnerPrint!(runtime, debug, 3, "Trying path {}", direct_path.display());
+                let maybe_file = File::open(direct_path.as_path());
+                if maybe_file.is_err() {
+                    runnerPrint!(runtime, debug, 3, "Couldn't open class file {}", maybe_file.unwrap_err());
+                    continue;
+                }
 
-            return Ok(maybe_read.unwrap());
-        } else {
-            runnerPrint!(runtime, debug, 2, "Could not find {} on class path {} (Error {:?})", name, class_path, direct_classname);
-            continue;
+                do_find_class(debug, name.as_str(), maybe_file.unwrap())
+            };
+
+        if maybe_class.is_some() {
+            return Ok(maybe_class.unwrap());
         }
     }
     return Err(RunnerError::ClassNotLoaded(String::from(name)));

@@ -9,13 +9,11 @@ extern crate byteorder;
 
 pub use reader::types::constant_pool::*;
 use std::char;
-use std::path::Path;
-use std::fs::File;
 use std::str;
 use std::mem::transmute;
 use std::io;
-use std::io::Read;
 use std::io::BufReader;
+use std::io::Read;
 use std::string::String;
 use std::rc::Rc;
 
@@ -321,7 +319,7 @@ fn string_from_utf8(buf: &Vec<u8>) -> Result<String, ClassReadError> {
 }
 
 fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<ConstantPoolItem, ClassReadError> {
-    let debug = true;
+    let debug = false;
     let tag = try!(reader.read_u8());
     *entry_count = 1;
     match tag {
@@ -425,27 +423,25 @@ fn read_constant_pool(reader: &mut Read, entry_count: &mut u16) -> Result<Consta
     }
 }
 
-fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, ClassResult), ClassReadError> {
-    let file = try!(File::open(filename));
-    let mut reader = BufReader::new(file);
-    let magic = try!(reader.read_u32::<BigEndian>());
-    let minor = try!(reader.read_u16::<BigEndian>());
-    let major = try!(reader.read_u16::<BigEndian>());
+pub fn read_stage_1<T: Read>(buf_reader: &mut BufReader<T>) -> Result<ClassResult, ClassReadError> {
+    let magic = try!(buf_reader.read_u32::<BigEndian>());
+    let minor = try!(buf_reader.read_u16::<BigEndian>());
+    let major = try!(buf_reader.read_u16::<BigEndian>());
     let version = (major as f32) + ((minor as f32) / (base(minor) as f32));
 
     if magic != 0xCAFEBABE {
-    return Err(ClassReadError::Parse);
+        return Err(ClassReadError::Parse);
     }
 
     if major < 45 || major > 52 {
-    return Err(ClassReadError::UnsupportedVersion(version));
+        return Err(ClassReadError::UnsupportedVersion(version));
     }
 
-    let cp_count = try!(reader.read_u16::<BigEndian>());
+    let cp_count = try!(buf_reader.read_u16::<BigEndian>());
     debugPrint!(true, 4, "cp: {}", cp_count);
 
     if cp_count == 0 {
-    return Err(ClassReadError::Parse);
+        return Err(ClassReadError::Parse);
     }
 
     let mut ret = ClassResult::new();
@@ -454,51 +450,42 @@ fn read_up_to_my_class_details(filename: &Path) -> Result<(BufReader<File>, Clas
     while i < cp_count {
         debugPrint!(true, 5, "{}", i);
         let mut entry_count : u16 = 1;
-        ret.constant_pool.pool.insert(i, try!(read_constant_pool(&mut reader, &mut entry_count)));
+        ret.constant_pool.pool.insert(i, try!(read_constant_pool(buf_reader, &mut entry_count)));
         i += entry_count;
     }
 
-    ret.access_flags = try!(reader.read_u16::<BigEndian>());
+    ret.access_flags = try!(buf_reader.read_u16::<BigEndian>());
     debugPrint!(true, 4, "access_flags: {}", ret.access_flags);
-    ret.this_class_index = try!(reader.read_u16::<BigEndian>());
-    return Ok((reader, ret));
+    ret.this_class_index = try!(buf_reader.read_u16::<BigEndian>());
+    return Ok(ret);
 }
 
-pub fn get_classname(filename: &Path) -> Result<String, ClassReadError> {
-    let (_reader, ret) = try!(read_up_to_my_class_details(filename));
-    let class_name = try!(ret.constant_pool.get_class_name(ret.this_class_index));
-    return Ok((*class_name).clone());
-}
-
-pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
-    debugPrint!(true, 4, "Reading file {}", filename.display());
-    let (mut reader, mut ret) = try!(read_up_to_my_class_details(filename));
-
-    ret.super_class_index = try!(reader.read_u16::<BigEndian>());
+pub fn read_stage_2<T: Read>(buf_reader: &mut BufReader<T>, ret: &mut ClassResult) -> Result<(), ClassReadError> {
+    ret.super_class_index = try!(buf_reader.read_u16::<BigEndian>());
     debugPrint!(true, 4, "class_indexes: {} {}", ret.this_class_index, ret.super_class_index);
 
-    let interfaces_count = try!(reader.read_u16::<BigEndian>());
+    let interfaces_count = try!(buf_reader.read_u16::<BigEndian>());
     debugPrint!(true, 4, "Interface count: {}", interfaces_count);
     for _ in 0..interfaces_count {
-        ret.interfaces.push(try!(reader.read_u16::<BigEndian>()));
+        ret.interfaces.push(try!(buf_reader.read_u16::<BigEndian>()));
     }
 
-    let fields_count = try!(reader.read_u16::<BigEndian>());
+    let fields_count = try!(buf_reader.read_u16::<BigEndian>());
     debugPrint!(true, 4, "Fields count: {}", fields_count);
     for _ in 0..fields_count {
-        ret.fields.push(try!(read_field(&ret.constant_pool, &mut reader)));
+        ret.fields.push(try!(read_field(&ret.constant_pool, buf_reader)));
     }
 
-    let methods_count = try!(reader.read_u16::<BigEndian>());
+    let methods_count = try!(buf_reader.read_u16::<BigEndian>());
     debugPrint!(true, 4, "Methods count: {}", methods_count);
     for _ in 0..methods_count {
-        ret.methods.push(try!(read_field(&ret.constant_pool, &mut reader)));
+        ret.methods.push(try!(read_field(&ret.constant_pool, buf_reader)));
     }
 
-    let attributes_count = try!(reader.read_u16::<BigEndian>());
+    let attributes_count = try!(buf_reader.read_u16::<BigEndian>());
     debugPrint!(true, 4, "Attributes count: {}", attributes_count);
     for _ in 0..attributes_count {
-        let attribute = try!(read_attribute(&ret.constant_pool, &mut reader));
+        let attribute = try!(read_attribute(&ret.constant_pool, buf_reader));
         match attribute {
             AttributeItem::Signature{index} => {ret.signature = Some(index);},
             AttributeItem::Code(c) => { ret.code = Some(c); },
@@ -506,5 +493,5 @@ pub fn read(filename: &Path) -> Result<ClassResult, ClassReadError> {
         }
     }
 
-    return Ok(ret);
+    return Ok(());
 }
