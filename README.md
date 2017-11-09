@@ -1,8 +1,4 @@
-# Project Title
-
-Rust JVM
-
-## Project Description
+# Rust JVM
 
 This project aims to be a clean implementation of a Java Virtual Machine in Rust. It was initially started by Sam Lancia in order to learn more about Java byte code and to learn Rust.
 
