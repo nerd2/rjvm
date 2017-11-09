@@ -21,7 +21,7 @@ use std::rc::Rc;
 
 use self::byteorder::{BigEndian, ReadBytesExt};
 
-macro_rules! PRINT_LEVEL { () => {2} }
+macro_rules! PRINT_LEVEL { () => {0} }
 
 macro_rules! debugPrint {
     ($enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { println!($fmt); } }};
