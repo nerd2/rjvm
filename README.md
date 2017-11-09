@@ -1,4 +1,4 @@
-# Rust JVM
+# Rust JVM [![Build Status](https://travis-ci.org/nerd2/rjvm.svg?branch=master)](https://travis-ci.org/nerd2/rjvm)
 
 This project aims to be a clean implementation of a Java Virtual Machine in Rust. It was initially started by Sam Lancia in order to learn more about Java byte code and to learn Rust.
 
