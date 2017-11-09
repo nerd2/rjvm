@@ -4,7 +4,7 @@ This project aims to be a clean implementation of a Java Virtual Machine in Rust
 
 ### Prerequisites
 
-An openjdk implementation of the Java runtime must be extracted into $BASE/javart for the library to operate. TODO: instructions on where to get this
+Builts and runs on Ubuntu with openjdk 8 and rust stable
 
 ### Installing
 
