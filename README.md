@@ -14,6 +14,12 @@ Currently the virtual machine is provided only as a library but we plan to imple
 
   cargo test
 
+## TODO
+
+- Threading
+- GC
+- JIT (LibJIT or direct codegen?)
+
 ## License
 
 See the [LICENSE.md](LICENSE.md) file for details
