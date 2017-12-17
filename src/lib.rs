@@ -8,7 +8,9 @@ unused_mut,
 )]
 
 extern crate glob;
+extern crate os_type;
 use std::path::Path;
+use std::process::Command;
 
 mod reader;
 
@@ -20,7 +22,19 @@ pub use reader::runner::Variable;
 pub use reader::runner::make_string;
 
 fn get_class_paths() -> Vec<String> {
-    return vec!(String::from("/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/rt.jar"));
+    match os_type::current_platform().os_type {
+        os_type::OSType::OSX => {
+            let jdk_path = Command::new("/usr/libexec/java_home").arg("-v").arg("1.8").output().expect("Failed to determine JDK location");
+            let jdk_path_str = String::from_utf8_lossy(&jdk_path.stdout);
+            return vec!(jdk_path_str.replace('\n',"") + "/jre/lib/rt.jar");
+        }
+        os_type::OSType::Ubuntu | os_type::OSType::Debian => {
+            return vec!(String::from("/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/rt.jar"));
+        }
+        _ => {
+            panic!("Unsupported system");
+        }
+    }
 }
 
 fn read(filename: &Path) -> reader::class_reader::ClassResult {
