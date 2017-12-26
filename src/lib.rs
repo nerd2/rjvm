@@ -9,6 +9,7 @@ unused_mut,
 
 extern crate glob;
 extern crate os_type;
+extern crate zip;
 use std::path::Path;
 use std::process::Command;
 
@@ -21,20 +22,34 @@ pub use reader::runner::Runtime;
 pub use reader::runner::Variable;
 pub use reader::runner::make_string;
 
-fn get_class_paths() -> Vec<String> {
-    match os_type::current_platform().os_type {
+fn get_rt_jar() -> Vec<zip::ZipArchive<File>> {
+    let rt_path : String = match os_type::current_platform().os_type {
         os_type::OSType::OSX => {
             let jdk_path = Command::new("/usr/libexec/java_home").arg("-v").arg("1.8").output().expect("Failed to determine JDK location");
             let jdk_path_str = String::from_utf8_lossy(&jdk_path.stdout);
-            return vec!(jdk_path_str.replace('\n',"") + "/jre/lib/rt.jar");
+            jdk_path_str.replace('\n',"") + "/jre/lib/rt.jar"
         }
         os_type::OSType::Ubuntu | os_type::OSType::Debian => {
-            return vec!(String::from("/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/rt.jar"));
+            String::from("/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/rt.jar")
         }
         _ => {
             panic!("Unsupported system");
         }
+    };
+
+    let path = Path::new(&rt_path);
+    let maybe_file = File::open(path);
+    if maybe_file.is_err() {
+        panic!("Couldn't open rt jar file {}", maybe_file.unwrap_err());
     }
+
+    let maybe_zip = zip::ZipArchive::new(maybe_file.unwrap());
+
+    if maybe_zip.is_err() {
+        panic!("Couldn't load rt zip {:?}", maybe_zip.unwrap_err());
+    }
+
+    return vec!(maybe_zip.unwrap());
 }
 
 fn read(filename: &Path) -> reader::class_reader::ClassResult {
@@ -45,27 +60,13 @@ fn read(filename: &Path) -> reader::class_reader::ClassResult {
     return class_result;
 }
 
-pub fn run(filename: &Path) {
-    let class_result = read(filename);
-    reader::runner::run(&get_class_paths(), &class_result).unwrap();
-}
 
 pub fn get_runtime(class_paths: &Vec<String>) -> reader::runner::Runtime {
-    let mut my_class_paths = get_class_paths();
-    for p in class_paths {
-        my_class_paths.insert(0, p.clone());
-    }
-    println!("My class paths {:?}", my_class_paths);
-    return reader::runner::get_runtime(&my_class_paths, true);
+    return reader::runner::get_runtime(class_paths, get_rt_jar(), true);
 }
 
 pub fn get_runtime_bypass_initialisation(class_paths: &Vec<String>) -> Runtime {
-    let mut my_class_paths = get_class_paths();
-    for p in class_paths {
-        my_class_paths.insert(0, p.clone());
-    }
-    println!("My class paths {:?}", my_class_paths);
-    return reader::runner::get_runtime(&my_class_paths, false);
+    return reader::runner::get_runtime(class_paths, get_rt_jar(), false);
 }
 
 pub fn run_method(runtime: &mut reader::runner::Runtime, filename: &Path, method: &str, arguments: &Vec<reader::runner::Variable>, return_descriptor: &str) -> reader::runner::Variable {

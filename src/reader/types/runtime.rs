@@ -1,15 +1,18 @@
 extern crate rand;
+extern crate zip;
 use reader::class_reader::*;
 use reader::runner::*;
 use reader::builtins::*;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::rc::Weak;
+use std::fs::File;
 
 pub struct Runtime {
     pub previous_frames: Vec<Frame>,
     pub current_frame: Frame,
     pub class_paths: Vec<String>,
+    pub jars: Vec<zip::ZipArchive<File>>,
     pub classes: HashMap<String, Rc<Class>>,
     pub count: i64,
     pub current_thread: Option<Variable>,
@@ -23,9 +26,10 @@ pub struct Runtime {
     pub objects: Vec<Weak<Object>>
 }
 impl Runtime {
-    pub fn new(class_paths: Vec<String>) -> Runtime {
+    pub fn new(class_paths: Vec<String>, jars: Vec<zip::ZipArchive<File>>) -> Runtime {
         return Runtime {
             class_paths: class_paths,
+            jars: jars,
             previous_frames: vec!(Frame::new()),
             current_frame: Frame::new(),
             classes: HashMap::new(),

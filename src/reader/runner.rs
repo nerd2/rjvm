@@ -150,51 +150,42 @@ fn find_class(runtime: &mut Runtime, base_name: &str) -> Result<ClassResult, Run
     let mut name = String::from(base_name);
     name = name.replace('.', "/");
     runnerPrint!(runtime, debug, 3, "Finding class {}", name);
+
     for class_path in runtime.class_paths.iter() {
         let mut direct_path = PathBuf::from(class_path);
-        let maybe_class =
-            if direct_path.extension().map(|x| x=="jar").unwrap_or(false) {
-                runnerPrint!(runtime, debug, 3, "Trying direct jar load {}", direct_path.display());
 
-                let maybe_file = File::open(direct_path.as_path());
-                if maybe_file.is_err() {
-                    runnerPrint!(runtime, debug, 3, "Couldn't open jar file {}", maybe_file.unwrap_err());
-                    continue;
-                }
+        for sub in name.split('/') {
+            direct_path.push(sub)
+        }
+        direct_path.set_extension("class");
+        runnerPrint!(runtime, debug, 3, "Trying path {}", direct_path.display());
+        let maybe_file = File::open(direct_path.as_path());
+        if maybe_file.is_err() {
+            runnerPrint!(runtime, debug, 3, "Couldn't open class file {}", maybe_file.unwrap_err());
+            continue;
+        }
 
-                let mut maybe_zip = zip::ZipArchive::new(maybe_file.unwrap());
-
-                if maybe_zip.is_err() {
-                    runnerPrint!(runtime, debug, 3, "Couldn't load zip {:?}", maybe_zip.unwrap_err());
-                    continue;
-                }
-
-                let maybe_zip_file = maybe_zip.as_mut().unwrap().by_name((name.clone() + ".class").as_str());
-                if maybe_zip_file.is_err() {
-                    runnerPrint!(runtime, debug, 3, "Couldn't find class {} in jar", name.as_str());
-                    continue;
-                }
-
-                do_find_class(debug, name.as_str(), maybe_zip_file.unwrap())
-            } else {
-                for sub in name.split('/') {
-                    direct_path.push(sub)
-                }
-                direct_path.set_extension("class");
-                runnerPrint!(runtime, debug, 3, "Trying path {}", direct_path.display());
-                let maybe_file = File::open(direct_path.as_path());
-                if maybe_file.is_err() {
-                    runnerPrint!(runtime, debug, 3, "Couldn't open class file {}", maybe_file.unwrap_err());
-                    continue;
-                }
-
-                do_find_class(debug, name.as_str(), maybe_file.unwrap())
-            };
+        let maybe_class = do_find_class(debug, name.as_str(), maybe_file.unwrap());
 
         if maybe_class.is_some() {
             return Ok(maybe_class.unwrap());
         }
     }
+
+    for jar in runtime.jars.iter_mut() {
+        let maybe_zip_file = jar.by_name((name.clone() + ".class").as_str());
+        if maybe_zip_file.is_err() {
+            runnerPrint!(runtime, debug, 3, "Couldn't find class {} in jar", name.as_str());
+            continue;
+        }
+
+        let maybe_class = do_find_class(debug, name.as_str(), maybe_zip_file.unwrap());
+
+        if maybe_class.is_some() {
+            return Ok(maybe_class.unwrap());
+        }
+    }
+
     return Err(RunnerError::ClassNotLoaded(String::from(name)));
 }
 
@@ -390,9 +381,9 @@ fn execute_method(runtime: &mut Runtime, class: &str, method: &str, descriptor: 
     }
 }
 
-pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerError> {
+pub fn run(class_paths: &Vec<String>, jars: Vec<zip::ZipArchive<File>>, class: &ClassResult) -> Result<(), RunnerError> {
     println!("Running");
-    let mut runtime = Runtime::new(class_paths.clone());
+    let mut runtime = Runtime::new(class_paths.clone(), jars);
     runtime.current_frame.constant_pool = class.constant_pool.clone();
 
     try!(bootstrap_class_and_dependencies(&mut runtime, String::new().as_str(), class));
@@ -405,8 +396,8 @@ pub fn run(class_paths: &Vec<String>, class: &ClassResult) -> Result<(), RunnerE
     return Ok(());
 }
 
-pub fn get_runtime(class_paths: &Vec<String>, initialise: bool) -> Runtime {
-    let mut runtime = Runtime::new(class_paths.clone());
+pub fn get_runtime(class_paths: &Vec<String>, jars: Vec<zip::ZipArchive<File>>, initialise: bool) -> Runtime {
+    let mut runtime = Runtime::new(class_paths.clone(), jars);
 
     if initialise {
         let _var = execute_method(&mut runtime, "java/lang/System", "initializeSystemClass", "()V", &Vec::new(), false).expect("Failed to initialize system");
