@@ -4,6 +4,7 @@ use reader::runner::*;
 use reader::builtins::*;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::rc::Weak;
 
 pub struct Runtime {
     pub previous_frames: Vec<Frame>,
@@ -18,6 +19,8 @@ pub struct Runtime {
     pub object_count: i32,
     pub stdout: String,
     pub stderr: String,
+    pub free_mem: i64,
+    pub objects: Vec<Weak<Object>>
 }
 impl Runtime {
     pub fn new(class_paths: Vec<String>) -> Runtime {
@@ -34,6 +37,8 @@ impl Runtime {
             object_count: rand::random::<i32>(),
             stdout: String::new(),
             stderr: String::new(),
+            free_mem: 4 * 1024 * 1024,
+            objects: Vec::new()
         };
     }
 

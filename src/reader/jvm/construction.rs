@@ -1,8 +1,10 @@
 use reader::class_reader::*;
+use reader::jvm::gc::*;
 use reader::runner::*;
 use reader::util::*;
 use std::collections::HashMap;
 use std::cell::RefCell;
+use std::mem::size_of;
 use std::rc::Rc;
 use std::rc::Weak;
 
@@ -16,6 +18,7 @@ pub fn construct_char_array(runtime: &mut Runtime, s: &str) -> Variable {
     for c in s.chars() {
         v.push(Variable::Char(c));
     }
+    runtime.free_mem -= v.len() as i64 + size_of::<(ArrayObject)>() as i64;
     let array_object = ArrayObject {
         is_null: false,
         element_type_ref: None,
@@ -27,6 +30,7 @@ pub fn construct_char_array(runtime: &mut Runtime, s: &str) -> Variable {
 }
 
 pub fn construct_array(runtime: &mut Runtime, class: Rc<Class>, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
+    runtime.free_mem -= size_of::<(ArrayObject)>() as i64 + data.as_ref().map(|x| x.len()).unwrap_or(0) as i64;
     let array_object = ArrayObject {
         is_null: data.is_none(),
         element_type_ref: Some(class.clone()),
@@ -44,6 +48,7 @@ pub fn construct_array_by_name(runtime: &mut Runtime, name: &str, data: Option<V
 
 pub fn construct_primitive_array(runtime: &mut Runtime, element_type: &str, data: Option<Vec<Variable>>) -> Result<Variable, RunnerError> {
     // TODO
+    runtime.free_mem -= size_of::<(ArrayObject)>() as i64 + data.as_ref().map(|x| x.len()).unwrap_or(0) as i64;
     let array_object = ArrayObject {
         is_null: data.is_none(),
         element_type_ref: None,
@@ -63,6 +68,7 @@ pub fn construct_null_object(runtime: &mut Runtime, class: Rc<Class>) -> Result<
         sub_class: RefCell::new(None),
         code: runtime.get_next_object_code()
     });
+    runtime.free_mem -= size_of::<(Object)>() as i64;
     return Ok(Variable::Reference(obj));
 }
 
@@ -104,6 +110,7 @@ pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, R
             sub_class: RefCell::new(sub_class.clone()),
             code: runtime.get_next_object_code()
         });
+        runtime.free_mem -= size_of::<(Object)>() as i64;
         if original_obj.is_none() {
             original_obj = Some(obj.clone());
         }
@@ -116,6 +123,7 @@ pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, R
             sub_class = Some(Rc::downgrade(&obj.clone()));
             class = maybe_super_class.unwrap();
         } else {
+            register_object(runtime, original_obj.as_ref().unwrap());
             return Ok(Variable::Reference(original_obj.unwrap()));
         }
     }

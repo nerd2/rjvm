@@ -1,6 +1,7 @@
 use reader::jvm::construction::*;
 use reader::jvm::class_objects::*;
 use reader::jvm::interpreter::*;
+use reader::jvm::gc::*;
 use reader::runner::*;
 use reader::util::*;
 use reader::class_reader::*;
@@ -209,6 +210,15 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("java/lang/Runtime", "availableProcessors", "()I") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: availableProcessors");
             runtime.push_on_stack(Variable::Int(1));
+        },
+        ("java/lang/Runtime", "freeMemory", "()J") => {
+            let free_mem : i64 = runtime.free_mem;
+            runnerPrint!(runtime, true, 2, "BUILTIN: freeMemory: {}", free_mem);
+            runtime.push_on_stack(Variable::Long(free_mem));
+        },
+        ("java/lang/Runtime", "gc", "()V") => {
+            runnerPrint!(runtime, true, 2, "BUILTIN: gc");
+            gc_hint_run(runtime);
         },
         ("java/lang/Object", "registerNatives", "()V") => {return Ok(true)},
         ("java/lang/Object", "notifyAll", "()V") => {

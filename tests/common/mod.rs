@@ -26,7 +26,7 @@ pub fn setup(classname: &str, source_body: &str, system_init: bool) -> (Runtime,
     source.hash(&mut hasher);
     let crc = hasher.finish();
     let mut temp_dir = env::temp_dir();
-    temp_dir.push(crc.to_string());
+    temp_dir.push(format!("rjvm-test-{}", crc));
 
     println!("temp: {}", temp_dir.display());
 

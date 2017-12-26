@@ -38,7 +38,7 @@ fn get_class_paths() -> Vec<String> {
 }
 
 fn read(filename: &Path) -> reader::class_reader::ClassResult {
-    let reader = File::open(filename).unwrap();
+    let reader = File::open(filename).expect(format!("Could not open {}", filename.display()).as_str());
     let mut buf_reader = BufReader::new(reader);
     let mut class_result = reader::class_reader::read_stage_1(&mut buf_reader).expect("Couldn't read headers of class file");
     reader::class_reader::read_stage_2(&mut buf_reader, &mut class_result).expect("Couldn't read rest of class file");

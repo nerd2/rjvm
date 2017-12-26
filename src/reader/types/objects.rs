@@ -3,6 +3,7 @@ use reader::runner::*;
 use reader::util::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::fmt;
 use std::rc::Rc;
 use std::rc::Weak;
@@ -16,6 +17,8 @@ pub struct Object {
     pub sub_class: RefCell<Option<Weak<Object>>>,
     pub code: i32
 }
+
+
 impl Object {
     pub fn get_at_index(&self, index: i64) -> Result<Variable, RunnerError> {
         let field = &self.type_ref.cr.fields[index as usize];
@@ -48,11 +51,19 @@ impl fmt::Display for Object {
     }
 }
 
+impl Hash for Object {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.code.hash(state);
+    }
+}
+
 impl PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
         return (self.is_null && other.is_null) || (self as *const _ == other as *const _);
     }
 }
+
+impl Eq for Object {}
 
 pub fn get_most_sub_class(mut obj: Rc<Object>) -> Rc<Object>{
     // Go to top of chain
