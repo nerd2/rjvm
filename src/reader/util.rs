@@ -7,7 +7,7 @@ pub fn make_string(runtime: &mut Runtime, val: &str) -> Result<Variable, RunnerE
     let var = try!(construct_object(runtime, &"java/lang/String"));
     let obj = var.to_ref();
     let array = construct_char_array(runtime,val);
-    try!(put_field(runtime, obj, &"java/lang/String", &"value", array));
+    try!(put_field(runtime, &obj, &"value", array));
     return Ok(var);
 }
 
@@ -34,16 +34,14 @@ pub fn extract_from_char_array(runtime: &mut Runtime, var: &Variable) -> Result<
     }
 }
 
-pub fn extract_from_string(runtime: &mut Runtime, obj: &Rc<Object>) -> Result<String, RunnerError> {
+pub fn extract_from_string(runtime: &mut Runtime, obj: &Option<Rc<Object>>) -> Result<String, RunnerError> {
     let field = try!(get_field(runtime, obj, "java/lang/String", "value"));
     let string = try!(extract_from_char_array(runtime, &field));
     return Ok(string);
 }
 
 pub fn string_to_string(obj: &Object) -> String {
-    let members = obj.members.borrow();
-    let value_array = members.get(&String::from("value"));
-    if value_array.is_none() { return String::from("");}
+    let value_array = obj.get_member(&String::from("value"));
     let array = value_array.unwrap().to_arrayobj();
     if array.is_null { return String::from("");}
     let vec = array.elements.borrow();

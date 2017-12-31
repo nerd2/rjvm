@@ -1,4 +1,3 @@
-
 extern crate rand;
 extern crate zip;
 use reader::class_reader::*;
@@ -11,6 +10,7 @@ pub use reader::types::runtime::*;
 pub use reader::types::variable::*;
 pub use reader::util::make_string;
 use reader::util::*;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io;
 use std::io::BufReader;
@@ -18,6 +18,15 @@ use std::io::Read;
 use std::io::Cursor;
 use std::rc::Rc;
 use std::path::PathBuf;
+
+lazy_static! {
+    static ref builtin_class_fields: HashMap<&'static str, Vec<&'static str>> = {
+        let mut m = HashMap::new();
+        m.insert("java/lang/Class", vec!("__is_array", "__is_primitive", "__class", "__componentType", "__is_unresolved"));
+        m.insert("java/lang/Thread", vec!("__alive"));
+        m
+    };
+}
 
 macro_rules! runnerPrint {
     ($runtime:expr, $enabled:expr, $level:expr, $fmt:expr) => {{if $enabled && $level <= PRINT_LEVEL!() { for _ in 1..$runtime.previous_frames.len() {print!("|"); } print!("{}: ", $runtime.count); println!($fmt); } }};
@@ -73,7 +82,7 @@ pub fn do_run_method(runtime: &mut Runtime) -> Result<(), RunnerError> {
                                 if current_position >= e.start_pc as u64 && current_position <= e.end_pc as u64 {
                                     if e.catch_type > 0 {
                                         let class_name = try!(runtime.current_frame.constant_pool.get_class_name(e.catch_type));
-                                        if exception.to_ref().type_ref.name != *class_name {
+                                        if exception.to_ref().unwrap().type_ref().name != *class_name {
                                             continue;
                                         }
                                     }
@@ -206,32 +215,19 @@ pub fn load_class(runtime: &mut Runtime, name: &str) -> Result<Rc<Class>, Runner
 }
 
 fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_result: &ClassResult) -> Result<Rc<Class>, RunnerError>  {
-    let debug = false;
+    let debug = true;
 
     let core_class = Rc::new(Class::new(&String::from(name), class_result));
+    let mut class_chain : Vec<Rc<Class>> = Vec::new();
+    let mut member_count : usize = 0;
+
     runtime.classes.insert(String::from(name), core_class.clone());
     runnerPrint!(runtime, debug, 1, "Bootstrapping {}", name);
 
     // Loop down superclass chain
     let mut class = core_class.clone();
     while !*class.initialising.borrow() && !*class.initialised.borrow() {
-        // Initialise variables, refs can be unresolved
-        for field in &class.cr.fields {
-            if field.access_flags & ACC_STATIC == 0 {
-                continue;
-            }
-
-            let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
-            let descriptor_string = try!(class.cr.constant_pool.get_str(field.descriptor_index));
-
-            runnerPrint!(runtime, debug, 3, "Constructing class static member {} {}", name_string, descriptor_string);
-
-            let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
-
-            runnerPrint!(runtime, debug, 3, "Constructed with {}", var);
-
-            class.statics.borrow_mut().insert((*name_string).clone(), var);
-        }
+        class_chain.push(class.clone());
 
         let super_class_name =
             if class.cr.super_class_index > 0 {
@@ -247,6 +243,7 @@ fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_res
             let maybe_superclass = runtime.classes.get(&super_class_name);
             if maybe_superclass.is_some() {
                 *class.super_class.borrow_mut() = Some(maybe_superclass.unwrap().clone());
+                member_count = *maybe_superclass.as_ref().unwrap().total_size.borrow();
                 break;
             }
         }
@@ -259,6 +256,34 @@ fn bootstrap_class_and_dependencies(runtime: &mut Runtime, name: &str, class_res
 
         class = new_class;
     }
+
+    for class in class_chain.iter().rev() {
+        for field in class.cr.fields.iter() {
+            let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
+            let descriptor_string = try!(class.cr.constant_pool.get_str(field.descriptor_index));
+
+            if field.access_flags & ACC_STATIC == 0 {
+                class.set_member_offset(name_string, member_count);
+                member_count = member_count + 1;
+            } else {
+                runnerPrint!(runtime, debug, 3, "Constructing class static member {} {}", name_string, descriptor_string);
+
+                let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
+
+                runnerPrint!(runtime, debug, 3, "Constructed with {}", var);
+
+                class.statics.borrow_mut().insert((*name_string).clone(), var);
+            }
+        }
+
+        builtin_class_fields.get(class.name.as_str()).map(|extra_fields|
+            for field in extra_fields {
+                class.set_member_offset(Rc::new(String::from(*field)), member_count);
+                member_count = member_count + 1;
+            });
+        *class.total_size.borrow_mut() = member_count;
+    }
+
     try!(Class::initialise(runtime, &core_class));
     runnerPrint!(runtime, debug, 1, "Bootstrap totally complete on {}", name);
     return Ok(core_class);
@@ -284,6 +309,7 @@ pub fn parse_single_type_descriptor(runtime: &mut Runtime, descriptor: &str, res
     }
 
     let variable;
+    let mut class : Option<Rc<Class>> = None;
     match maybe_type_specifier.unwrap() {
         'B' => variable = Variable::Byte(0),
         'C' => variable = Variable::Char('\0'),
@@ -301,12 +327,12 @@ pub fn parse_single_type_descriptor(runtime: &mut Runtime, descriptor: &str, res
                     String::from(descriptor)
                 };
             if resolve {
-                let class = try!(load_class(runtime, type_string.as_str()));
-                variable = try!(construct_null_object(runtime, class));
+                class = Some(try!(load_class(runtime, type_string.as_str())));
+                variable = try!(construct_null_object(runtime, class.clone().unwrap()));
             } else {
                 if runtime.classes.contains_key(type_string.as_str()) {
-                    let class = runtime.classes.get(type_string.as_str()).unwrap().clone();
-                    variable = try!(construct_null_object(runtime, class));
+                    class = Some(runtime.classes.get(type_string.as_str()).unwrap().clone());
+                    variable = try!(construct_null_object(runtime, class.clone().unwrap()));
                 } else {
                     variable = Variable::UnresolvedReference(type_string.clone());
                 }
@@ -323,7 +349,7 @@ pub fn parse_single_type_descriptor(runtime: &mut Runtime, descriptor: &str, res
         } else if variable.is_unresolved() {
             return Ok(Variable::UnresolvedReference(String::from(descriptor)));
         } else {
-            return Ok(try!(construct_array(runtime, variable.to_ref().type_ref.clone(), None)));
+            return Ok(try!(construct_array(runtime, class.unwrap(), None)));
         }
     } else {
         return Ok(variable);
@@ -372,7 +398,7 @@ pub fn parse_function_type_descriptor(runtime: &mut Runtime, descriptor: &str) -
 
 fn execute_method(runtime: &mut Runtime, class: &str, method: &str, descriptor: &str, _args: &Vec<Variable>, ret: bool) -> Result<Variable, RunnerError> {
     //runtime.add_arguments(arguments);
-    runtime.invoke(Rc::new(String::from(class)), Rc::new(String::from(method)), Rc::new(String::from(descriptor)), false, false);
+    let _ignore = runtime.invoke(Rc::new(String::from(class)), Rc::new(String::from(method)), Rc::new(String::from(descriptor)), false, false);
     try!(do_run_method(runtime));
     if ret {
         return Ok(runtime.pop_from_stack().unwrap().clone());
@@ -400,7 +426,8 @@ pub fn get_runtime(class_paths: &Vec<String>, jars: Vec<zip::ZipArchive<File>>, 
     let mut runtime = Runtime::new(class_paths.clone(), jars);
 
     if initialise {
-        let _var = execute_method(&mut runtime, "java/lang/System", "initializeSystemClass", "()V", &Vec::new(), false).expect("Failed to initialize system");
+        let execution_result = execute_method(&mut runtime, "java/lang/System", "initializeSystemClass", "()V", &Vec::new(), false);
+        execution_result.expect("Failed to initialize system");
     }
 
     return runtime;

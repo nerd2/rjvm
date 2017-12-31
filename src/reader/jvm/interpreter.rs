@@ -236,25 +236,18 @@ fn ifacmp(desc: &str, runtime: &mut Runtime, buf: &mut Cursor<&Vec<u8>>, should_
     let popped2 = runtime.pop_from_stack().unwrap();
     let popped1 = runtime.pop_from_stack().unwrap();
     runnerPrint!(runtime, true, 2, "{} {} {} {}", desc, popped1, popped2, branch_offset);
-    let matching = match popped1 {
-        Variable::Reference(ref obj1) => {
-            match popped2 {
-                Variable::Reference(ref obj2) => {
-                    (obj1.is_null && obj2.is_null) || rc_ptr_eq(obj1, obj2)
-                },
-                _ => false
-            }
-        },
-        Variable::ArrayReference(ref aobj1) => {
-            match popped2 {
-                Variable::ArrayReference(ref aobj2) => {
-                    (aobj1.is_null && aobj2.is_null) || rc_ptr_eq(aobj1, aobj2)
-                },
-                _ => false
-            }
-        },
-        _ => false
-    };
+    let matching =
+        if popped1.is_reference() && popped2.is_reference() {
+            let obj1 = popped1.to_ref();
+            let obj2 = popped2.to_ref();
+            (obj1.is_none() && obj2.is_none()) || (obj1.is_some() && obj2.is_some() && rc_ptr_eq(obj1.as_ref().unwrap(), obj2.as_ref().unwrap()))
+        } else if popped1.is_array_reference() && popped2.is_array_reference() {
+            let aobj1 = popped1.to_arrayobj();
+            let aobj2 = popped2.to_arrayobj();
+            (aobj1.is_null && aobj2.is_null) || rc_ptr_eq(&aobj1, &aobj2)
+        } else {
+            false
+        };
     if should_match == matching {
         let new_position = (current_position as i64 + branch_offset as i64) as u64;
         runnerPrint!(runtime, true, 2, "BRANCHED from {} to {}", current_position, new_position);
@@ -638,7 +631,7 @@ pub fn step(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) -> Re
             let var = runtime.pop_from_stack().unwrap();
             let obj = var.to_ref();
             let f = try!(get_field(runtime, &obj, class_name.as_str(), field_name.as_str()));
-            runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}' result:'{}'", class_name, field_name, typ, obj, f);
+            runnerPrint!(runtime, true, 2, "GETFIELD class:'{}' field:'{}' type:'{}' object:'{}' result:'{}'", class_name, field_name, typ, obj.unwrap(), f);
             runtime.push_on_stack(f);
         }
         181 => {
@@ -647,8 +640,8 @@ pub fn step(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) -> Re
             let value = runtime.pop_from_stack().unwrap();
             let var = runtime.pop_from_stack().unwrap();
             let obj = var.to_ref();
-            runnerPrint!(runtime, true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj, value);
-            try!(put_field(runtime, obj, class_name.as_str(), field_name.as_str(), value));
+            runnerPrint!(runtime, true, 2, "PUTFIELD {} {} {} {} {}", class_name, field_name, typ, obj.as_ref().unwrap(), value);
+            try!(put_field_specific_class_name(runtime, &obj, class_name.as_str(), field_name.as_str(), value));
         }
         182 => {
             let index = try!(buf.read_u16::<BigEndian>());
@@ -748,20 +741,11 @@ pub fn step(runtime: &mut Runtime, name: &str, buf: &mut Cursor<&Vec<u8>>) -> Re
             runnerPrint!(runtime, true, 2, "INSTANCEOF {} {}", var, class_name);
 
             let var_ref = var.to_ref();
-            let mut matches = false;
-            if !var_ref.is_null {
-                let mut obj = get_most_sub_class(var_ref);
-
-                // Search down to find if instance of
-                while {matches = obj.type_ref.name == *class_name; obj.super_class.borrow().is_some()} {
-                    if matches {
-                        break;
-                    }
-                    let new_obj = obj.super_class.borrow().as_ref().unwrap().clone();
-                    obj = new_obj;
-                }
+            let mut matches = 0;
+            if var_ref.is_some() && Class::find_superclass(var_ref.unwrap().type_ref(), class_name).is_some() {
+                matches = 1;
             }
-            runtime.push_on_stack(Variable::Int(if matches {1} else {0}));
+            runtime.push_on_stack(Variable::Int(matches));
         }
         194 => {
             let var = runtime.pop_from_stack().unwrap();

@@ -2,11 +2,9 @@ use reader::class_reader::*;
 use reader::jvm::gc::*;
 use reader::runner::*;
 use reader::util::*;
-use std::collections::HashMap;
 use std::cell::RefCell;
 use std::mem::size_of;
 use std::rc::Rc;
-use std::rc::Weak;
 
 pub fn initialise_variable(runtime: &mut Runtime, descriptor_string: &str) -> Result<Variable, RunnerError> {
     let variable = try!(parse_single_type_descriptor(runtime, descriptor_string, false));
@@ -59,17 +57,8 @@ pub fn construct_primitive_array(runtime: &mut Runtime, element_type: &str, data
     return Ok(Variable::ArrayReference(Rc::new(array_object)));
 }
 
-pub fn construct_null_object(runtime: &mut Runtime, class: Rc<Class>) -> Result<Variable, RunnerError> {
-    let obj = Rc::new(Object {
-        is_null: true,
-        type_ref: class,
-        members: RefCell::new(HashMap::new()),
-        super_class: RefCell::new(None),
-        sub_class: RefCell::new(None),
-        code: runtime.get_next_object_code()
-    });
-    runtime.free_mem -= size_of::<(Object)>() as i64;
-    return Ok(Variable::Reference(obj));
+pub fn construct_null_object(_runtime: &mut Runtime, class: Rc<Class>) -> Result<Variable, RunnerError> {
+    return Ok(Variable::Reference(class, None));
 }
 
 pub fn construct_null_object_by_name(runtime: &mut Runtime, name: &str) -> Result<Variable, RunnerError> {
@@ -82,13 +71,12 @@ pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, R
     try!(load_class(runtime, name));
 
     let original_class = try!(load_class(runtime, name));
-    let mut original_obj : Option<Rc<Object>> = None;
+    let total_size = original_class.total_size.borrow();
+    let obj = Object::new(runtime, &original_class.clone(), *total_size);
     let mut class = original_class.clone();
-    let mut sub_class : Option<Weak<Object>> = None;
 
     loop {
-        runnerPrint!(runtime, debug, 3, "Constructing object of type {} with subclass {}", class.name, sub_class.is_some());
-        let mut members: HashMap<String, Variable> = HashMap::new();
+        runnerPrint!(runtime, debug, 3, "Constructing object of type {}", class.name);
         for field in &class.cr.fields {
             if field.access_flags & ACC_STATIC != 0 {
                 continue;
@@ -99,32 +87,15 @@ pub fn construct_object(runtime: &mut Runtime, name: &str) -> Result<Variable, R
 
             let var = try!(initialise_variable(runtime, descriptor_string.as_str()));
 
-            members.insert((*name_string).clone(), var);
+            obj.put_member_at_offset(class.find_member_offset(&*name_string).unwrap(), var);
         }
 
-        let obj = Rc::new(Object {
-            is_null: false,
-            type_ref: class.clone(),
-            members: RefCell::new(members),
-            super_class: RefCell::new(None),
-            sub_class: RefCell::new(sub_class.clone()),
-            code: runtime.get_next_object_code()
-        });
-        runtime.free_mem -= size_of::<(Object)>() as i64;
-        if original_obj.is_none() {
-            original_obj = Some(obj.clone());
-        }
-        if sub_class.is_some() {
-            let sub_class_up = sub_class.unwrap().upgrade().unwrap();
-            *sub_class_up.super_class.borrow_mut() = Some(obj.clone());
-        }
         let maybe_super_class = class.super_class.borrow().clone();
         if maybe_super_class.is_some() {
-            sub_class = Some(Rc::downgrade(&obj.clone()));
             class = maybe_super_class.unwrap();
         } else {
-            register_object(runtime, original_obj.as_ref().unwrap());
-            return Ok(Variable::Reference(original_obj.unwrap()));
+            register_object(runtime, &obj);
+            return Ok(Variable::Reference(original_class.clone(), Some(obj)));
         }
     }
 }

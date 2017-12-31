@@ -21,13 +21,13 @@ fn make_field(runtime: &mut Runtime, clazz: &Variable, name: Rc<String>, descrip
     let name_var_interned = try!(string_intern(runtime, &name_var));
     let signature_var = try!(make_string(runtime, descriptor.as_str()));
     let var = try!(construct_object(runtime, class_name));
-    try!(put_field(runtime, var.to_ref(), class_name, "name", name_var_interned));
-    try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
+    try!(put_field(runtime, &var.to_ref(), "name", name_var_interned));
+    try!(put_field(runtime, &var.to_ref(), "signature", signature_var));
     let type_obj = try!(get_class_object_from_descriptor(runtime, descriptor.as_str()));
-    try!(put_field(runtime, var.to_ref(), class_name, "type", type_obj));
-    try!(put_field(runtime, var.to_ref(), class_name, "slot", Variable::Int(slot)));
-    try!(put_field(runtime, var.to_ref(), class_name, "clazz", clazz.clone()));
-    try!(put_field(runtime, var.to_ref(), class_name, "modifiers", Variable::Int(access as i32)));
+    try!(put_field(runtime, &var.to_ref(), "type", type_obj));
+    try!(put_field(runtime, &var.to_ref(), "slot", Variable::Int(slot)));
+    try!(put_field(runtime, &var.to_ref(), "clazz", clazz.clone()));
+    try!(put_field(runtime, &var.to_ref(), "modifiers", Variable::Int(access as i32)));
     return Ok(var);
 }
 
@@ -37,8 +37,8 @@ fn make_method(runtime: &mut Runtime, name: Rc<String>, descriptor: Rc<String>, 
     let name_var_interned = try!(string_intern(runtime, &name_var));
     let signature_var = try!(make_string(runtime, descriptor.as_str()));
     let var = try!(construct_object(runtime, class_name));
-    try!(put_field(runtime, var.to_ref(), class_name, "name", name_var_interned));
-    try!(put_field(runtime, var.to_ref(), class_name, "signature", signature_var));
+    try!(put_field(runtime, &var.to_ref(), "name", name_var_interned));
+    try!(put_field(runtime, &var.to_ref(), "signature", signature_var));
     return Ok(var);
 }
 
@@ -47,15 +47,13 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("java/lang/Class", "registerNatives", "()V") => {}
         ("java/lang/Class", "isArray", "()Z") => {
             let obj = args[0].clone().to_ref();
-            let members = obj.members.borrow();
-            let value = members.get(&String::from("__is_array")).unwrap();
+            let value = obj.unwrap().get_member(&String::from("__is_array")).unwrap();
             runnerPrint!(runtime, true, 2, "BUILTIN: is_array {}", value);
             runtime.push_on_stack(value.clone());
         }
         ("java/lang/Class", "isPrimitive", "()Z") => {
             let obj = args[0].clone().to_ref();
-            let members = obj.members.borrow();
-            let value = members.get(&String::from("__is_primitive")).unwrap();
+            let value = obj.unwrap().get_member(&String::from("__is_primitive")).unwrap();
             runnerPrint!(runtime, true, 2, "BUILTIN: is_primitive {}", value);
             runtime.push_on_stack(value.clone());
         }
@@ -69,9 +67,9 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         }
         ("java/lang/Class", "isAssignableFrom", "(Ljava/lang/Class;)Z") => {
             let class_object_1 = args[0].clone().to_ref();
-            let mut class1 = class_object_1.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+            let mut class1 = class_object_1.unwrap().get_member(&String::from("__class")).unwrap().to_ref_type();
             let class_object_2 = args[1].clone().to_ref();
-            let class2 = class_object_2.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+            let class2 = class_object_2.unwrap().get_member(&String::from("__class")).unwrap().to_ref_type();
             while class1 != class2 {
                 if class1.super_class.borrow().is_none() { break; }
                 let new_class1 = class1.super_class.borrow().clone().unwrap();
@@ -82,11 +80,11 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         }
         ("java/lang/Class", "getComponentType", "()Ljava/lang/Class;") => {
             let class_object_1 = args[0].clone().to_ref();
-            let is_array = class_object_1.members.borrow().get(&String::from("__is_array")).unwrap().to_bool();
+            let is_array = class_object_1.as_ref().unwrap().get_member(&String::from("__is_array")).unwrap().to_bool();
             if !is_array {
-                return Err(RunnerError::ClassInvalid2(format!("getComponentType on non-array {}", class_object_1)));
+                return Err(RunnerError::ClassInvalid2(format!("getComponentType on non-array {}", class_object_1.as_ref().unwrap())));
             }
-            let var = class_object_1.members.borrow().get(&String::from("__componentType")).unwrap().clone();
+            let var = class_object_1.as_ref().unwrap().get_member(&String::from("__componentType")).unwrap().clone();
             runnerPrint!(runtime, true, 2, "BUILTIN: getComponentType {}", var);
 
             runtime.push_on_stack(var);
@@ -117,29 +115,27 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("java/lang/Class", "desiredAssertionStatus0", "(Ljava/lang/Class;)Z") => {runtime.push_on_stack(Variable::Boolean(false));}
         ("java/lang/Class", "getDeclaredFields0", "(Z)[Ljava/lang/reflect/Field;") => {
             let class_obj = args[0].to_ref();
-            let class = class_obj.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+            let class = class_obj.unwrap().get_member(&String::from("__class")).unwrap().to_ref_type();
             let public_only = args[1].to_bool();
 
             runnerPrint!(runtime, true, 2, "BUILTIN: getDeclaredFields0 {}", class.name);
 
             let mut field_objects : Vec<Variable> = Vec::new();
-            let mut index = 0;
             for field in &class.cr.fields {
                 if !public_only || (field.access_flags & ACC_PUBLIC != 0) {
                     let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
                     let descriptor_string = try!(class.cr.constant_pool.get_str(field.descriptor_index));
-                    let field_object = try!(make_field(runtime, &args[0], name_string, descriptor_string, field.access_flags, index));
+                    let offset = if field.access_flags & ACC_STATIC != 0 {0} else {class.find_member_offset(&name_string).unwrap()};
+                    let field_object = try!(make_field(runtime, &args[0], name_string, descriptor_string, field.access_flags, offset as i32));
                     field_objects.push(field_object);
                 }
-
-                index += 1;
             }
             let fields_array = try!(construct_array_by_name(runtime, &"java/lang/reflect/Field", Some(field_objects)));
             runtime.push_on_stack(fields_array);
         }
         ("java/lang/Class", "getDeclaredMethods0", "(Z)[Ljava/lang/reflect/Method;") => {
             let class_obj = args[0].to_ref();
-            let class = class_obj.members.borrow().get(&String::from("__class")).unwrap().to_ref_type();
+            let class = class_obj.unwrap().get_member(&String::from("__class")).unwrap().to_ref_type();
             let public_only = args[1].to_bool();
 
             let mut method_objects : Vec<Variable> = Vec::new();
@@ -227,7 +223,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         },
         ("java/lang/String", "intern", "()Ljava/lang/String;") => {
             let interned = try!(string_intern(runtime, &args[0]));
-            runnerPrint!(runtime, true, 2, "BUILTIN: intern {} {:p}", args[0], &*interned.to_ref());
+            runnerPrint!(runtime, true, 2, "BUILTIN: intern {} {:p}", args[0], &*interned.to_ref().unwrap());
             runtime.push_on_stack(interned);
         },
         ("java/lang/Float", "floatToRawIntBits", "(F)I") => {
@@ -276,8 +272,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("java/lang/Thread", "registerNatives", "()V") => {},
         ("java/lang/Thread", "isAlive", "()Z") => {
             let obj = args[0].clone().to_ref();
-            let members = obj.members.borrow();
-            let var = members.get(&String::from("__alive")).unwrap_or(&Variable::Boolean(false)).clone();
+            let var = obj.unwrap().get_member(&String::from("__alive")).unwrap_or(Variable::Boolean(false)).clone();
             runnerPrint!(runtime, true, 2, "BUILTIN: isAlive {}", var);
             runtime.push_on_stack(var);
         },
@@ -287,7 +282,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("java/lang/Thread", "setPriority0", "(I)V") => {
             let obj = args[0].clone().to_ref();
             runnerPrint!(runtime, true, 2, "BUILTIN: setPriority0 {} {}", args[0], args[1]);
-            try!(put_field(runtime, obj.clone(), &"java/lang/Thread", &"priority", args[1].clone()));
+            try!(put_field(runtime, &obj.clone(), &"priority", args[1].clone()));
         }
         ("java/lang/Thread", "currentThread", "()Ljava/lang/Thread;") => {
             runnerPrint!(runtime, true, 2, "BUILTIN: currentThread");
@@ -297,7 +292,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
                 {
                     let var = try!(construct_object(runtime, &"java/lang/ThreadGroup"));
                     let obj = var.to_ref();
-                    try!(invoke_nested(runtime, obj.type_ref.clone(), vec!(var.clone()), "<init>", "()V", false));
+                    try!(invoke_nested(runtime, obj.unwrap().type_ref().clone(), vec!(var.clone()), "<init>", "()V", false));
                     thread_group = var.clone();
                 }
 
@@ -306,11 +301,12 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
 
                     runtime.current_thread = Some(var.clone());
                     let obj = var.to_ref();
-                    let mut members = obj.members.borrow_mut();
-                    members.insert(String::from("name"), try!(make_string(runtime, &"thread")));
-                    members.insert(String::from("priority"), Variable::Int(1));
-                    members.insert(String::from("group"), thread_group);
-                    members.insert(String::from("__alive"), Variable::Boolean(true));
+
+                    let thread_str = try!(make_string(runtime, &"thread"));
+                    try!(put_field(runtime, &obj, &String::from("name"), thread_str));
+                    try!(put_field(runtime, &obj, &String::from("priority"), Variable::Int(1)));
+                    try!(put_field(runtime, &obj, &String::from("group"), thread_group));
+                    try!(put_field(runtime, &obj, &String::from("__alive"), Variable::Boolean(true)));
                 }
             }
             let thread = runtime.current_thread.as_ref().unwrap().clone();

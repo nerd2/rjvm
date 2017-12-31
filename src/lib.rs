@@ -3,6 +3,7 @@ non_snake_case,
 unreachable_code,
 unused_assignments,
 unused_imports,
+unused_must_use,
 unused_variables,
 unused_mut,
 )]
@@ -10,6 +11,8 @@ unused_mut,
 extern crate glob;
 extern crate os_type;
 extern crate zip;
+#[macro_use]
+extern crate lazy_static;
 use std::path::Path;
 use std::process::Command;
 

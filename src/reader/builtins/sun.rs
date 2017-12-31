@@ -8,35 +8,29 @@ fn get_at_index<F, G>(runtime: &mut Runtime, args: &Vec<Variable>, desc: &str, v
     where F: Fn(&Variable) -> G
 {
     let obj = args[1].clone().to_ref();
-    let offset = args[2].to_long();
-    let ret = try!(obj.get_at_index(offset));
+    let offset = args[2].to_long() as usize;
+    let ret = try!(obj.as_ref().unwrap().get_member_at_offset(offset).ok_or(RunnerError::ClassInvalid("Loaded invalid index into object")));
     validator(&ret);
-    runnerPrint!(runtime, true, 2, "BUILTIN: {} {} {} {}", desc, obj, offset, ret);
+    runnerPrint!(runtime, true, 2, "BUILTIN: {} {} {} {}", desc, obj.unwrap(), offset, ret);
     runtime.push_on_stack(ret);
     return Ok(());
 }
 
 fn compare_and_swap<F, G>(runtime: &mut Runtime, args: &Vec<Variable>, desc: &str, extractor: F, second_offset: usize) -> Result<(), RunnerError>
     where F: Fn(&Variable) -> G,
-          G: std::cmp::PartialEq,
-          G: std::fmt::Display
+          G: std::cmp::PartialEq
 {
     let obj = args[1].clone().to_ref();
-    let class = args[1].clone().to_ref_type();
     let offset = args[2].to_long(); // 2 slots :(
     let expected = extractor(&args[4].clone());
     let swap = args[5 + second_offset].clone();
 
-    let field = &class.cr.fields[offset as usize];
-    let name_string = try!(class.cr.constant_pool.get_str(field.name_index));
-    let mut members = obj.members.borrow_mut();
-    runnerPrint!(runtime, true, 2, "BUILTIN: {} {} {} {} {} {}", desc, obj, offset, name_string, expected, swap);
-    let current = extractor(members.get(&*name_string).unwrap());
-    runnerPrint!(runtime, true, 2, "BUILTIN: {} {} {} {} {} {}", desc, obj, offset, current, expected, swap);
+    let current = extractor(&obj.as_ref().unwrap().get_member_at_offset(offset as usize).unwrap());
+    //runnerPrint!(runtime, true, 2, "BUILTIN: {} {} {} {} {} {}", desc, obj.as_ref().unwrap(), offset, current, expected, swap);
     let ret;
     if current == expected {
         runnerPrint!(runtime, true, 3, "BUILTIN: {} swapped", desc);
-        members.insert((*name_string).clone(), swap);
+        obj.as_ref().unwrap().put_member_at_offset(offset as usize, swap);
         ret = true;
     } else {
         ret = false;
@@ -76,7 +70,7 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
             let obj = args[1].clone().to_ref();
             let slot = try!(get_field(runtime, &obj, &"java/lang/reflect/Field", "slot")).to_int();
 
-            runnerPrint!(runtime, true, 2, "BUILTIN: objectFieldOffset {} {}", obj, slot);
+            runnerPrint!(runtime, true, 2, "BUILTIN: objectFieldOffset {} {}", obj.unwrap(), slot);
             runtime.push_on_stack(Variable::Long(slot as i64));
         },
         ("sun/misc/Unsafe", "arrayIndexScale", "(Ljava/lang/Class;)I") => {

@@ -7,14 +7,14 @@ pub fn register_array_object(_runtime: &mut Runtime, _obj: &Rc<ArrayObject>) {
 }
 
 pub fn register_object(runtime: &mut Runtime, obj: &Rc<Object>) {
-    println!("Register object {}", &obj);
+    //println!("Register object {}", &obj);
     runtime.objects.push(Rc::downgrade(obj));
 }
 
 fn mark_var(collectable_objects: &mut Vec<Weak<Object>>, var: &Variable) {
     match var {
-        &Variable::Reference(ref obj) => {
-            collectable_objects.retain(|x| x.upgrade().map(|x| x != *obj).unwrap_or(false));
+        &Variable::Reference(ref _class, ref obj) => {
+            collectable_objects.retain(|x| x.upgrade().map(|y| &y != obj.as_ref().unwrap()).unwrap_or(false));
         },
         &Variable::ArrayReference(ref _obj) => {
 
@@ -41,12 +41,13 @@ pub fn gc_hint_run(runtime: &mut Runtime) {
     }
 
     for obj in &collectable_objects {
-        let mut maybe_obj_ref = obj.upgrade();
+        let maybe_obj_ref = obj.upgrade();
         while maybe_obj_ref.is_some() {
-            let obj_ref = maybe_obj_ref.unwrap();
-            obj_ref.members.borrow_mut().clear();
-            maybe_obj_ref = obj_ref.super_class.borrow().clone();
-            *obj_ref.super_class.borrow_mut() = None;
+            let obj_ref = maybe_obj_ref.as_ref().unwrap();
+            let class = obj_ref.type_ref();
+            for i in 0..*class.total_size.borrow() {
+                obj_ref.put_member_at_offset(i, Variable::Boolean(false));
+            }
         }
     }
 }

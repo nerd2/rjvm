@@ -107,44 +107,38 @@ impl Runtime {
                 return Err(RunnerError::ClassInvalid2(format!("NULL obj ref on local var stack for method on {}", class_name)));
             }
 
-            match &new_local_variables[0] {
-                &Variable::Reference(ref _x) => {
-                    let mut obj = new_local_variables[0].to_ref();
-                    if special {
-                        while obj.type_ref.name != *class_name {
-                            let new_obj = try!(
-                                obj.super_class.borrow().as_ref()
-                                    .ok_or(RunnerError::ClassInvalid2(format!("Couldn't find class {} in tree for {}", class_name, obj.type_ref.name)))
-                            ).clone();
-                            obj = new_obj;
+            if new_local_variables[0].is_reference() {
+                let obj = new_local_variables[0].to_ref();
+
+                if !special {
+                    class = obj.as_ref().unwrap().type_ref();
+                }
+
+                // Find method
+                while {
+                    code = class.cr.get_code(method_name.as_str(), descriptor.as_str()).ok();
+                    code.is_none()
+                } {
+                    let new_class = class.super_class.borrow().clone();
+                    if new_class.is_none() {
+                        if try!(try_builtin(&class_name, &method_name, &descriptor, &new_local_variables, self)) {
+                            return Ok(());
                         }
-                    } else {
-                        obj = get_most_sub_class(obj);
-                    }
 
-                    // Find method
-                    while { code = obj.type_ref.cr.get_code(method_name.as_str(), descriptor.as_str()).ok(); code.is_none() } {
-                        if obj.super_class.borrow().is_none() {
-                            if try!(try_builtin(&class_name, &method_name, &descriptor, &new_local_variables, self)) {
-                                return Ok(());
-                            }
-
-                            return Err(RunnerError::ClassInvalid2(format!("Could not find super class of object '{}' that matched method '{}' '{}'", obj, method_name, descriptor)))
-                        }
-                        let new_obj = obj.super_class.borrow().clone().unwrap();
-                        obj = new_obj;
+                        return Err(RunnerError::ClassInvalid2(format!("Could not find super class of object '{}' that matched method '{}' '{}'", obj.unwrap(), method_name, descriptor)))
                     }
-                    class = obj.type_ref.clone();
-                },
-                &Variable::ArrayReference(ref arrayobj) => {
-                    // TODO, other "Object" methods like clone?
-                    if try!(try_builtin(&class_name, &method_name, &descriptor, &new_local_variables, self)) {
-                        return Ok(());
-                    }
+                    class = new_class.unwrap();
+                }
+            } else if new_local_variables[0].is_array_reference() {
+                let arrayobj = new_local_variables[0].to_arrayobj();
+                // TODO, other "Object" methods like clone?
+                if try!(try_builtin(&class_name, &method_name, &descriptor, &new_local_variables, self)) {
+                    return Ok(());
+                }
 
-                    return Err(RunnerError::ClassInvalid2(format!("Could not find super class of array '{}' that matched method '{}' '{}'", arrayobj, method_name, descriptor)))
-                },
-                _ => panic!("Tried to invoke method on {}", new_local_variables[0])
+                return Err(RunnerError::ClassInvalid2(format!("Could not find super class of array '{}' that matched method '{}' '{}'", arrayobj, method_name, descriptor)))
+            } else {
+                panic!("Tried to invoke method on {}", new_local_variables[0]);
             }
         } else {
             if try!(try_builtin(&class_name, &method_name, &descriptor, &new_local_variables, self)) {

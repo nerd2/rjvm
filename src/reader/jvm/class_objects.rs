@@ -19,12 +19,11 @@ pub fn get_primitive_class_object(runtime: &mut Runtime, descriptor: String) -> 
 
     let name_object = try!(make_string(runtime, try!(descriptor_to_type_name(descriptor.as_str())).as_str()));
     let interned_string = try!(string_intern(runtime, &name_object));
-    let statics = &var.to_ref().type_ref.statics;
+    let statics = &var.to_ref().unwrap().type_ref().statics;
     statics.borrow_mut().insert(String::from("initted"), Variable::Boolean(true));
-    let members = &var.to_ref().members;
-    members.borrow_mut().insert(String::from("name"), interned_string);
-    members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(true));
-    members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(false));
+    try!(put_field(runtime, &var.to_ref(), "name", interned_string));
+    try!(put_field(runtime, &var.to_ref(), "__is_primitive", Variable::Boolean(true)));
+    try!(put_field(runtime, &var.to_ref(), "__is_array", Variable::Boolean(false)));
 
     return Ok(var);
 }
@@ -42,10 +41,10 @@ pub fn get_class_object_from_descriptor(runtime: &mut Runtime, descriptor: &str)
 
     let name_object = try!(make_string(runtime, try!(descriptor_to_type_name(descriptor)).as_str()));
     let interned_string = try!(string_intern(runtime, &name_object));
-    try!(put_field(runtime, var.to_ref(), &"java/lang/Class", "name", interned_string));
-    let statics = &var.to_ref().type_ref.statics;
+    try!(put_field(runtime, &var.to_ref(), "name", interned_string));
+    let statics = &var.to_ref().unwrap().type_ref().statics;
     statics.borrow_mut().insert(String::from("initted"), Variable::Boolean(true));
-    let members = &var.to_ref().members;
+    let obj = var.to_ref();
 
     let subtype = try!(parse_single_type_descriptor(runtime, descriptor, false));
     let mut is_primitive = false;
@@ -55,9 +54,9 @@ pub fn get_class_object_from_descriptor(runtime: &mut Runtime, descriptor: &str)
         Variable::UnresolvedReference(ref _type_string) => {
             is_unresolved = true;
         },
-        Variable::Reference(ref obj) => {
-            let class = obj.type_ref.clone();
-            members.borrow_mut().insert(String::from("__class"), try!(construct_null_object(runtime, class)));
+        Variable::Reference(ref class, ref _x) => {
+            let null_obj = try!(construct_null_object(runtime, class.clone()));
+            try!(put_field(runtime, &obj, "__class", null_obj));
         },
         Variable::ArrayReference(ref array_obj) => {
             is_array = true;
@@ -67,13 +66,13 @@ pub fn get_class_object_from_descriptor(runtime: &mut Runtime, descriptor: &str)
             } else {
                 component_type = try!(get_primitive_class_object(runtime, array_obj.element_type_str.clone()));
             }
-            members.borrow_mut().insert(String::from("__componentType"), component_type);
+            try!(put_field(runtime, &obj, "__componentType", component_type));
         },
         _ => { is_primitive = true; }
     }
-    members.borrow_mut().insert(String::from("__is_primitive"), Variable::Boolean(is_primitive));
-    members.borrow_mut().insert(String::from("__is_array"), Variable::Boolean(is_array));
-    members.borrow_mut().insert(String::from("__is_unresolved"), Variable::Boolean(is_unresolved));
+    try!(put_field(runtime, &obj, "__is_primitive", Variable::Boolean(is_primitive)));
+    try!(put_field(runtime, &obj, "__is_array", Variable::Boolean(is_array)));
+    try!(put_field(runtime, &obj, "__is_unresolved", Variable::Boolean(is_unresolved)));
 
     return Ok(var);
 }

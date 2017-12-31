@@ -2,40 +2,70 @@ use reader::jvm::construction::*;
 use reader::runner::*;
 use reader::util::*;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::fmt;
+use std::boxed::Box;
 use std::rc::Rc;
-use std::rc::Weak;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Object {
-    pub is_null: bool,
-    pub type_ref: Rc<Class>,
-    pub members: RefCell<HashMap<String, Variable>>,
-    pub super_class: RefCell<Option<Rc<Object>>>,
-    pub sub_class: RefCell<Option<Weak<Object>>>,
-    pub code: i32
+    code: i32,
+    type_ref: Rc<Class>,
+    members: RefCell<Box<[Variable]>>
 }
 
-
 impl Object {
-    pub fn get_at_index(&self, index: i64) -> Result<Variable, RunnerError> {
-        let field = &self.type_ref.cr.fields[index as usize];
-        let name_string = try!(self.type_ref.cr.constant_pool.get_str(field.name_index));
-        let members = self.members.borrow();
-        return Ok(members.get(&*name_string).unwrap().clone());
+    pub fn new(runtime: &mut Runtime, type_ref: &Rc<Class>, num_members: usize) -> Rc<Object> {
+        let obj = Object {
+            code: runtime.get_next_object_code(),
+            type_ref: type_ref.clone(),
+            members: RefCell::new(vec![Variable::Boolean(false); num_members].into_boxed_slice()),
+        };
+        return Rc::new(obj);
+    }
+
+    pub fn type_ref(&self) -> Rc<Class> {
+        return self.type_ref.clone();
+    }
+
+    pub fn code(&self) -> i32 {
+        return self.code;
+    }
+
+    pub fn get_member(&self, name: &String) -> Option<Variable> {
+        let maybe_offset = self.type_ref().find_member_offset(name);
+        if maybe_offset.is_some() {
+            return self.get_member_at_offset(maybe_offset.unwrap());
+        } else {
+            return None;
+        }
+    }
+
+    pub fn get_member_at_offset(&self, offset: usize) -> Option<Variable> {
+        return Some(self.members.borrow()[offset].clone());
+    }
+
+    pub fn put_member(&self, name: &String, var: Variable) -> Option<()> {
+        let maybe_offset = self.type_ref().find_member_offset(name);
+        return maybe_offset.map(|x| self.put_member_at_offset(x, var));
+    }
+
+    pub fn put_member_at_offset(&self, offset: usize, var: Variable) {
+        self.members.borrow_mut()[offset] = var;
     }
 
     pub fn deep_compare(&self, other:&Self) -> bool {
-        let self_sub_class = self.sub_class.borrow();
-        let other_sub_class = other.sub_class.borrow();
+        if self.type_ref != other.type_ref {
+            return false;
+        }
 
-        return self.type_ref == other.type_ref &&
-            self.members == other.members &&
-            self_sub_class.is_some() == other_sub_class.is_some() &&
-            (self_sub_class.is_none() || (self_sub_class.clone().unwrap().upgrade() == other_sub_class.clone().unwrap().upgrade())) &&
-            self.super_class == other.super_class;
+        for i in 0..*self.type_ref.total_size.borrow() {
+            if self.get_member_at_offset(i) != other.get_member_at_offset(i) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
 
@@ -44,9 +74,9 @@ impl fmt::Display for Object {
         return match self.type_ref.name.as_str() {
             "java/lang/String" => {
                 let str = string_to_string(self);
-                write!(f, "String {} '{}' null:{}", self.code, str.as_str(), self.is_null)
+                write!(f, "String {} '{}'", self.code, str.as_str())
             }
-            _ => {write!(f, "Object {} type:{} null:{}",self.code, self.type_ref.name.as_str(), self.is_null) }
+            _ => {write!(f, "Object {} type:{}",self.code, self.type_ref.name.as_str()) }
         }
     }
 }
@@ -59,48 +89,11 @@ impl Hash for Object {
 
 impl PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
-        return (self.is_null && other.is_null) || (self as *const _ == other as *const _);
+        return self as *const _ == other as *const _;
     }
 }
 
 impl Eq for Object {}
-
-pub fn get_most_sub_class(mut obj: Rc<Object>) -> Rc<Object>{
-    // Go to top of chain
-    while obj.sub_class.borrow().is_some() {
-        let new_obj = obj.sub_class.borrow().as_ref().unwrap().upgrade().unwrap();
-        obj = new_obj;
-    }
-    return obj;
-}
-
-pub fn get_super_obj(mut obj: Rc<Object>, class_name: &str) -> Result<Rc<Object>, RunnerError> {
-    while obj.type_ref.name != class_name && obj.super_class.borrow().is_some() {
-        let new_obj = obj.super_class.borrow().clone().unwrap();
-        obj = new_obj;
-        debugPrint!(false, 3, "Class didn't match, checking '{}' now)", obj.type_ref.name);
-    }
-
-    if obj.type_ref.name != class_name {
-        debugPrint!(true, 1, "Expected object on stack with class name '{}' but got '{}'", class_name, obj.type_ref.name);
-        return Err(RunnerError::ClassInvalid2(format!("Couldn't find object on stack with class name '{}'", class_name)));
-    }
-
-    return Ok(obj);
-}
-
-// Get the (super)object which contains a field
-pub fn get_obj_field(mut obj: Rc<Object>, field_name: &str) -> Result<Rc<Object>, RunnerError> {
-    let class_name = obj.type_ref.name.clone();
-    while {let members = obj.members.borrow(); !members.contains_key(field_name) } {
-        let new_obj = obj.super_class.borrow().clone();
-        if new_obj.is_none() {
-            return Err(RunnerError::ClassInvalid2(format!("Couldn't find field '{}' in class {}", field_name, class_name)));
-        }
-        obj = new_obj.unwrap();
-    }
-    return Ok(obj.clone());
-}
 
 pub fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
     let debug = false;
@@ -114,41 +107,58 @@ pub fn put_static(runtime: &mut Runtime, class_name: &str, field_name: &str, val
     return Ok(());
 }
 
-pub fn put_field(runtime: &mut Runtime, obj: Rc<Object>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
-    let debug = false;
-    runnerPrint!(runtime, debug, 2, "Put Field {} {} {}", class_name, field_name, value);
-    let super_obj = try!(get_super_obj(obj, class_name));
-    let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
-    let mut members = super_obj_with_field.members.borrow_mut();
-    members.insert(String::from(field_name), value);
-    return Ok(());
-}
-
-pub fn get_field(runtime: &mut Runtime, obj: &Rc<Object>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
-    let debug = false;
-
-    runnerPrint!(runtime, debug, 2, "Get Field {} {} {}", *obj, class_name, field_name);
-
-    if obj.is_null {
+fn null_check(runtime: &mut Runtime, obj: &Option<Rc<Object>>) -> Result<(), RunnerError> {
+    if obj.is_none() {
         let exception = try!(construct_object(runtime, &"java/lang/NullPointerException"));
         return Err(RunnerError::Exception(exception));
     }
+    return Ok(());
+}
 
-    let super_obj = try!(get_super_obj(obj.clone(), class_name));
-    let super_obj_with_field = try!(get_obj_field(super_obj, field_name));
-    let mut members = super_obj_with_field.members.borrow_mut();
+pub fn put_field(runtime: &mut Runtime, obj: &Option<Rc<Object>>, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    try!(null_check(runtime, obj));
+    let type_ref = obj.as_ref().unwrap().type_ref().clone();
+    return put_field_specific_class(runtime, obj, &type_ref, field_name, value);
+}
 
-    let unresolved_type_name;
-    {
-        let member = members.get(&*field_name).unwrap();
-        if !member.is_unresolved() {
-            return Ok(member.clone());
-        }
-        unresolved_type_name = member.get_unresolved_type_name().clone();
+pub fn put_field_specific_class_name(runtime: &mut Runtime, obj: &Option<Rc<Object>>, class_name: &str, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    try!(null_check(runtime, obj));
+    let class = try!(load_class(runtime, class_name));
+    return put_field_specific_class(runtime, obj, &class, field_name, value);
+}
+
+pub fn put_field_specific_class(runtime: &mut Runtime, obj: &Option<Rc<Object>>, class: &Rc<Class>, field_name: &str, value: Variable) -> Result<(), RunnerError> {
+    let debug = false;
+    runnerPrint!(runtime, debug, 2, "Put Field Specific Class {} {} {}", class.name, field_name, value);
+
+    let maybe_offset = class.find_member_offset(&String::from(field_name));
+    if maybe_offset.is_none() {
+        panic!("TODO, class doesn't contain field");
     }
 
-    let var = try!(construct_null_object_by_name(runtime, unresolved_type_name.as_str()));
-    members.insert(String::from(field_name), var.clone());
+    obj.as_ref().unwrap().put_member_at_offset(maybe_offset.unwrap(), value);
+    return Ok(());
+}
+
+pub fn get_field(runtime: &mut Runtime, obj: &Option<Rc<Object>>, class_name: &str, field_name: &str) -> Result<Variable, RunnerError> {
+    try!(null_check(runtime, obj));
+
+    let debug = false;
+
+    runnerPrint!(runtime, debug, 2, "Get Field {} {} {}", *obj.as_ref().unwrap(), class_name, field_name);
+
+    let class = try!(load_class(runtime, class_name));
+    let maybe_offset = class.find_member_offset(&String::from(field_name));
+    if maybe_offset.is_none() {
+        panic!("TODO, class doesn't contain field");
+    }
+
+    let member = obj.as_ref().unwrap().get_member_at_offset(maybe_offset.unwrap()).unwrap();
+    if !member.is_unresolved() {
+        return Ok(member.clone());
+    }
+    let var = try!(construct_null_object_by_name(runtime, member.get_unresolved_type_name().clone().as_str()));
+    obj.as_ref().unwrap().put_member_at_offset(maybe_offset.unwrap(), var.clone());
     return Ok(var);
 }
 

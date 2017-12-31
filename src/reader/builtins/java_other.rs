@@ -34,13 +34,13 @@ pub fn try_builtin(class_name: &Rc<String>, method_name: &Rc<String>, descriptor
         ("java/io/FileDescriptor", "initIDs", "()V") => {},
         ("java/security/AccessController", "doPrivileged", "(Ljava/security/PrivilegedAction;)Ljava/lang/Object;") => {
             let action = args[0].clone().to_ref();
-            runnerPrint!(runtime, true, 2, "BUILTIN: doPrivileged {}", action);
-            try!(invoke_nested(runtime, action.type_ref.clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
+            runnerPrint!(runtime, true, 2, "BUILTIN: doPrivileged {}", action.as_ref().unwrap());
+            try!(invoke_nested(runtime, action.unwrap().type_ref().clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
         }
         ("java/security/AccessController", "doPrivileged", "(Ljava/security/PrivilegedExceptionAction;)Ljava/lang/Object;") => {
             let action = args[0].clone().to_ref();
-            runnerPrint!(runtime, true, 2, "BUILTIN: doPrivileged (ExceptionAction) {}", action);
-            try!(invoke_nested(runtime, action.type_ref.clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
+            runnerPrint!(runtime, true, 2, "BUILTIN: doPrivileged (ExceptionAction) {}", action.as_ref().unwrap());
+            try!(invoke_nested(runtime, action.unwrap().type_ref().clone(), args.clone(), "run", "()Ljava/lang/Object;", false));
         }
         ("java/security/AccessController", "getStackAccessControlContext", "()Ljava/security/AccessControlContext;") => {
             let ret = try!(construct_null_object_by_name(runtime, &"java/security/AccessControlContext"));
